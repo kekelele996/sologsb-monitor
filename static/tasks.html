@@ -159,11 +159,12 @@
   <details class="template-panel" id="templatePanel">
     <summary>自动触发 Prompt 模板 <span id="templateCount"></span></summary>
     <div class="template-body">
-      <textarea id="promptTemplatePreview" readonly spellcheck="false"></textarea>
+      <textarea id="promptTemplatePreview" spellcheck="false"></textarea>
       <div class="template-actions">
+        <button class="btn primary" id="saveTemplateBtn" type="button">保存模板</button>
         <button class="btn" id="copyTemplateBtn" type="button">复制模板</button>
         <button class="btn" id="copySelectedPromptBtn" type="button">复制已选项目 Prompt</button>
-        <span>平台任务入队时会保存已渲染 Prompt 快照</span>
+        <span>模板保存后用于后续入队；加入队列前会自动保存未保存修改</span>
       </div>
     </div>
   </details>
@@ -198,7 +199,7 @@
   </main>
   <div class="toast" id="toast"></div>
   <script>
-    const state = { data:null, query:"", platformItems:[], platformTotal:null, platformSelected:null, platformLoading:false, loading:false, timer:null, logItemId:null, logTimer:null };
+    const state = { data:null, query:"", platformItems:[], platformTotal:null, platformSelected:null, platformLoading:false, loading:false, promptDirty:false, timer:null, logItemId:null, logTimer:null };
     const $ = (s) => document.querySelector(s);
     const mergeProjectPoolToggle = $("#mergeProjectPoolToggle");
     try { mergeProjectPoolToggle.checked = localStorage.getItem("sologsb.mergeProjectPool") === "1"; } catch (_) {}
@@ -271,7 +272,7 @@
     }
 
     function renderedPrompt(project) {
-      const template = state.data?.automation?.promptTemplate || "";
+      const template = $("#promptTemplatePreview")?.value ?? state.data?.automation?.promptTemplate ?? "";
       const code = String(project?.code || "").trim();
       const name = String(project?.name || "").trim();
       const selected = [code, name].filter(Boolean).join(" · ") || "未指定（由执行器从 Solo Manager 选择）";
@@ -283,14 +284,31 @@
         .replaceAll("{{difficulty}}", $("#platformDifficulty")?.value || "困难");
     }
 
-    function renderPromptTemplate() {
-      const template = state.data?.automation?.promptTemplate || "";
+    function renderPromptTemplate(force = false) {
+      const saved = state.data?.automation?.promptTemplate || "";
       const preview = $("#promptTemplatePreview");
-      if (preview) preview.value = template;
+      if (preview && (force || !state.promptDirty)) preview.value = saved;
+      const template = preview?.value ?? saved;
       const count = $("#templateCount");
-      if (count) count.textContent = `${template.replace(/\s/g, "").length} 个非空白字符`;
+      if (count) count.textContent = `${state.promptDirty ? "未保存 · " : ""}${template.replace(/\s/g, "").length} 个非空白字符`;
       const selectedButton = $("#copySelectedPromptBtn");
-      if (selectedButton) selectedButton.disabled = !state.platformSelected || !template;
+      if (selectedButton) selectedButton.disabled = !state.platformSelected || !template.trim();
+      const saveButton = $("#saveTemplateBtn");
+      if (saveButton) saveButton.disabled = !state.promptDirty || !template.trim();
+    }
+
+    async function savePromptTemplate(silent = false) {
+      const template = $("#promptTemplatePreview").value;
+      if (!template.trim()) {
+        toast("Prompt 模板不能为空", true);
+        return false;
+      }
+      const saved = await api("set-prompt-template", { template });
+      if (!saved) return false;
+      state.promptDirty = false;
+      render();
+      if (!silent) toast("Prompt 模板已保存");
+      return true;
     }
 
     async function copyText(value, message) {
@@ -482,6 +500,7 @@
     $("#addPlatformBtn").addEventListener("click", async () => {
       const selected = state.platformSelected;
       if (!selected) return toast("请先选择 Solo Manager 项目", true);
+      if (state.promptDirty && !(await savePromptTemplate(true))) return;
       const added = await api("queue-add-platform", {
         project: selected,
         taskType: $("#platformTaskType").value,
@@ -494,10 +513,15 @@
       renderPlatform();
       render();
     });
-    $("#copyTemplateBtn").addEventListener("click", () => copyText(state.data?.automation?.promptTemplate || "", "模板已复制"));
+    $("#promptTemplatePreview").addEventListener("input", () => {
+      state.promptDirty = true;
+      renderPromptTemplate();
+    });
+    $("#saveTemplateBtn").addEventListener("click", () => savePromptTemplate());
+    $("#copyTemplateBtn").addEventListener("click", () => copyText($("#promptTemplatePreview").value || "", "模板已复制"));
     $("#copySelectedPromptBtn").addEventListener("click", () => copyText(renderedPrompt(state.platformSelected), "已复制当前项目 Prompt"));
-    $("#platformTaskType").addEventListener("change", renderPromptTemplate);
-    $("#platformDifficulty").addEventListener("change", renderPromptTemplate);
+    $("#platformTaskType").addEventListener("change", () => renderPromptTemplate());
+    $("#platformDifficulty").addEventListener("change", () => renderPromptTemplate());
     $("#refreshBtn").addEventListener("click", async () => { await load(); await loadPlatform(true); });
     load();
     loadPlatform();

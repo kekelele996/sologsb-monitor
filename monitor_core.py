@@ -2307,6 +2307,17 @@ class QueueManager:
         save_config(self.config, config_path)
         return self.snapshot()
 
+    def set_prompt_template(self, template: str) -> dict[str, Any]:
+        value = str(template or "")
+        if not value.strip():
+            raise MonitorError("Prompt 模板不能为空")
+        if len(value) > 200000:
+            raise MonitorError("Prompt 模板过长")
+        self._automation_cfg()["promptTemplate"] = value
+        config_path = Path(str(self.config.get("_configPath") or CONFIG_PATH))
+        save_config(self.config, config_path)
+        return self.snapshot()
+
     def set_roots(self, roots: list[str]) -> dict[str, Any]:
         resolved: list[str] = []
         for raw in roots:
@@ -3007,6 +3018,8 @@ class MonitorService:
             return self.queue.set_capacity(int(payload.get("capacity") or 0))
         if action == "set-cooldown":
             return self.queue.set_cooldown(int(payload.get("cooldownSeconds") or 0))
+        if action == "set-prompt-template":
+            return self.queue.set_prompt_template(str(payload.get("template") or ""))
         if action == "set-paused":
             return self.queue.set_paused(bool(payload.get("paused")))
         if action == "queue-add":

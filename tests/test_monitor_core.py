@@ -124,6 +124,10 @@ class MonitorCoreTests(unittest.TestCase):
         self.assertIn('id="platformAvailableCount"', html)
         self.assertIn('id="cooldownInput"', html)
         self.assertIn('api("set-cooldown",{cooldownSeconds:Number($("#cooldownInput").value)})', html)
+        self.assertIn('id="saveTemplateBtn"', html)
+        self.assertNotIn('id="promptTemplatePreview" readonly', html)
+        self.assertIn('api("set-prompt-template", { template })', html)
+        self.assertIn('state.promptDirty = true;', html)
         self.assertIn("execution.activeTasks", html)
 
     def test_platform_project_scope_toggle_and_source_badges(self):
@@ -151,6 +155,18 @@ class MonitorCoreTests(unittest.TestCase):
             )
             self.assertEqual(item["triggerPrompt"], "执行平台项目 cy-902")
             self.assertIn("promptTemplate", manager.snapshot())
+
+    def test_prompt_template_can_be_updated_and_persisted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            config_path = root / "config.json"
+            config = load_config(path=config_path, roots=[str(root)])
+            manager = QueueManager(config, JobManager(config), state_path=root / "queue.json")
+            template = "自定义模板 {{project_code}} / {{task_type}}"
+            snapshot = manager.set_prompt_template(template)
+            self.assertEqual(snapshot["promptTemplate"], template)
+            reloaded = load_config(path=config_path, roots=[str(root)])
+            self.assertEqual(reloaded["automation"]["promptTemplate"], template)
 
     def test_queue_add_remove(self):
         with tempfile.TemporaryDirectory() as temp:
