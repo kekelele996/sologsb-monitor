@@ -96,7 +96,15 @@
     .row .input { flex:1; min-width:0; }
     .list { display:grid; gap:6px; }
     .card { padding:10px; border:1px solid var(--line); border-radius:3px; background:var(--panel); }
-    .root { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center; }
+    .root { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:8px; align-items:center; }
+    .root.is-inactive { opacity:.62; }
+    .root-actions { display:flex; align-items:center; gap:5px; }
+    .root-toggle { display:inline-flex; align-items:center; gap:5px; color:var(--faint); font:600 8px/1 var(--mono); white-space:nowrap; cursor:pointer; }
+    .root-toggle input { appearance:none; width:24px; height:14px; margin:0; border:1px solid var(--line-strong); border-radius:999px; background:var(--panel-soft); position:relative; }
+    .root-toggle input::after { content:""; position:absolute; top:2px; left:2px; width:8px; height:8px; border-radius:50%; background:var(--faint); transition:transform .16s,background .16s; }
+    .root-toggle input:checked { border-color:var(--ok); background:color-mix(in srgb,var(--ok) 20%,var(--panel)); }
+    .root-toggle input:checked::after { transform:translateX(10px); background:var(--ok); }
+    .root-toggle:has(input:checked) { color:var(--ok); }
     .path { color:var(--muted); font:500 9px/1.45 var(--mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .task { display:grid; grid-template-columns:minmax(0,1fr) 78px auto; gap:8px; align-items:center; }
     .task-name { min-width:0; font-size:11px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -173,7 +181,7 @@
       <div class="column-head"><h2>监控目录</h2><span id="rootCount">0 个</span></div>
       <div class="list" id="rootList"></div>
       <div class="row" style="margin-top:10px"><input class="input" id="rootInput" placeholder="/path/to/task-root"><button class="btn" id="addRootBtn" type="button">添加</button></div>
-      <div class="notice" style="margin-top:12px">这里只扫描目录，不会直接启动任务。</div>
+      <div class="notice" style="margin-top:12px">只有开启“监控中”的目录会被监控页扫描；新增目录默认不激活。</div>
       <section class="log-panel inline-log-panel" id="inlineLogPanel">
         <div class="log-head"><h2>运行日志</h2><div class="log-head-actions"><button class="btn ghost" id="inlineLogRefresh" type="button">刷新</button></div></div>
         <select id="inlineLogSelect" aria-label="选择运行日志"></select>
@@ -428,13 +436,15 @@
 
     function render() {
       const d=state.data||{}, a=d.automation||{}, items=a.items||[], counts=a.counts||{}, execution=d.summary||{};
-      $("#rootCount").textContent=`${(a.roots||[]).length} 个`;
+      const allRoots=a.roots||[];
+      const activeRoots=new Set(a.activeRoots ?? allRoots);
+      $("#rootCount").textContent=`${activeRoots.size}/${allRoots.length} 个监控中`;
       $("#taskCount").textContent=`${(d.tasks||[]).length} 个`;
       $("#queueCount").textContent=`${counts.pending||0} 待执行`;
       const visiblePlatformCount = state.platformLoading ? "—" : platformScopeItems().length;
       const platformScopeLabel = mergeProjectPoolToggle.checked ? "个可用项目" : "个我的项目";
       $("#summary").innerHTML=`<strong>${a.capacity||2}</strong> 并发 · <strong>${counts.pending||0}</strong> 待执行 · <strong>${execution.activeTasks||0}</strong> 执行中 · <strong>${counts.failed||0}</strong> 失败 · <strong>${visiblePlatformCount}</strong> ${platformScopeLabel}`;
-      $("#rootList").innerHTML=(a.roots||[]).map(root=>`<div class="card root"><span class="path" title="${esc(root)}">${esc(root)}</span><button class="btn ghost" type="button" data-root-remove="${esc(root)}" ${(a.roots||[]).length<2?"disabled":""}>删除</button></div>`).join("")||`<div class="empty">未设置监控目录。</div>`;
+      $("#rootList").innerHTML=allRoots.map(root=>{const active=activeRoots.has(root);return `<div class="card root ${active?"":"is-inactive"}"><span class="path" title="${esc(root)}">${esc(root)}</span><div class="root-actions"><label class="root-toggle" title="${active?"监控页正在扫描":"监控页已停用"}"><input type="checkbox" role="switch" data-root-active="${esc(root)}" ${active?"checked":""}><span>${active?"监控中":"未监控"}</span></label><button class="btn ghost" type="button" data-root-remove="${esc(root)}" ${allRoots.length<2?"disabled":""}>删除</button></div></div>`}).join("")||`<div class="empty">未设置监控目录。</div>`;
       const query=state.query.trim().toLowerCase();
       const tasks=(d.tasks||[]).filter(t=>!query||[t.name,t.projectCode,t.taskType].join(" ").toLowerCase().includes(query));
       $("#taskList").innerHTML=tasks.map(t=>`<div class="card task"><div><div class="task-name" title="${esc(t.name)}">${esc(t.name)}</div><div class="meta">${esc(t.projectCode||t.taskType||"—")} · ${esc(t.stateStatus||"")}</div></div><select data-task-side="${esc(t.id)}"><option value="both">A/B</option><option value="A">A</option><option value="B">B</option></select><button class="btn" type="button" data-queue-add="${esc(t.id)}">加入</button></div>`).join("")||`<div class="empty">没有匹配任务。</div>`;
@@ -447,6 +457,11 @@
       $("#stats").innerHTML=`<div class="stat"><b>${execution.activeTasks||0}</b><span>当前任务</span></div><div class="stat"><b>${a.capacity||2}</b><span>并发上限</span></div><div class="stat"><b>${counts.done||0}</b><span>已完成</span></div>`;
       renderPlatform();
     }
+    document.addEventListener("change", async (e)=>{
+      const toggle=e.target.closest("[data-root-active]");
+      if(!toggle) return;
+      await api("set-root-active",{root:toggle.dataset.rootActive,active:toggle.checked});
+    });
     document.addEventListener("click", async (e)=>{
       const add=e.target.closest("[data-queue-add]");
       if(add){ const id=add.dataset.queueAdd; const side=document.querySelector(`[data-task-side="${id}"]`)?.value||"both"; await api("queue-add",{taskId:id,side}); toast("已加入队列"); return; }
@@ -455,7 +470,7 @@
       const copyPrompt=e.target.closest("[data-copy-queue-prompt]"); if(copyPrompt){ const item=(state.data?.automation?.items||[]).find(candidate=>candidate.id===copyPrompt.dataset.copyQueuePrompt); await copyText(item?.triggerPrompt||"", "任务 Prompt 已复制"); return; }
       const q=e.target.closest("[data-q-action]"); if(q){ const id=q.dataset.id,a=q.dataset.qAction; if(a==="up"||a==="down") await api("queue-move",{itemId:id,delta:a==="up"?-1:1}); else if(a==="remove") await api("queue-remove",{itemId:id}); else if(a==="retry") await api("queue-retry",{itemId:id}); }
     });
-    $("#addRootBtn").addEventListener("click",async()=>{ const v=$("#rootInput").value.trim(); if(!v)return toast("请输入目录",true); const roots=[...(state.data?.automation?.roots||[])]; if(!roots.includes(v))roots.push(v); await api("set-roots",{roots}); $("#rootInput").value=""; });
+    $("#addRootBtn").addEventListener("click",async()=>{ const v=$("#rootInput").value.trim(); if(!v)return toast("请输入目录",true); const roots=[...(state.data?.automation?.roots||[])]; if(!roots.includes(v))roots.push(v); const saved=await api("set-roots",{roots}); if(saved){toast("目录已添加，开启“监控中”后才会被监控页扫描");$("#rootInput").value="";} });
     $("#rootInput").addEventListener("keydown",e=>{ if(e.key==="Enter") $("#addRootBtn").click(); });
     $("#searchInput").addEventListener("input",e=>{ state.query=e.target.value; render(); });
     $("#queueToggleBtn").addEventListener("click",()=>api("set-paused",{paused:!Boolean(state.data?.automation?.paused)}));

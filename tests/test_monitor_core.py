@@ -128,6 +128,9 @@ class MonitorCoreTests(unittest.TestCase):
         self.assertNotIn('id="promptTemplatePreview" readonly', html)
         self.assertIn('api("set-prompt-template", { template })', html)
         self.assertIn('state.promptDirty = true;', html)
+        self.assertIn('data-root-active=', html)
+        self.assertIn('api("set-root-active",{root:toggle.dataset.rootActive,active:toggle.checked})', html)
+        self.assertIn('只有开启“监控中”的目录会被监控页扫描', html)
         self.assertIn("execution.activeTasks", html)
 
     def test_platform_project_scope_toggle_and_source_badges(self):
@@ -140,7 +143,7 @@ class MonitorCoreTests(unittest.TestCase):
         self.assertIn('function queuedProjectCodes()', html)
         self.assertIn('return items.filter((item) => !queuedCodes.has(String(item.code || "").trim().toLowerCase()));', html)
         self.assertIn('renderPlatform();\n      render();', html)
-        self.assertIn('      renderPlatform();\n    }\n    document.addEventListener("click"', html)
+        self.assertIn('      renderPlatform();\n    }\n    document.addEventListener("change"', html)
 
     def test_platform_queue_item_snapshots_rendered_prompt(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -175,6 +178,50 @@ class MonitorCoreTests(unittest.TestCase):
             self.assertEqual(queued["triggerPrompt"], "自定义模板 cy-903 / feature迭代 / 地狱")
             reloaded = load_config(path=config_path, roots=[str(root)])
             self.assertEqual(reloaded["automation"]["promptTemplate"], template)
+
+    def test_root_activation_controls_monitor_scanning(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            root1 = base / "root-one"
+            root2 = base / "root-two"
+            for root, name in ((root1, "task-one"), (root2, "task-two")):
+                monitor = root / name / "monitor"
+                monitor.mkdir(parents=True)
+                (monitor / "state.json").write_text(
+                    json.dumps({"taskName": name, "status": "blocked", "sides": {}}, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+            config_path = base / "config.json"
+            config = load_config(path=config_path, roots=[str(root1), str(root2)])
+            config["monitor"]["activeRoots"] = [str(root1)]
+            with mock.patch.object(monitor_core, "STATE_DIR", base / "state"):
+                service = MonitorService(config)
+                snapshot = service.snapshot(fetch_submissions=False)
+                self.assertEqual([task["name"] for task in snapshot["tasks"]], ["task-one"])
+                self.assertEqual(snapshot["activeRoots"], [str(root1.resolve())])
+                service.queue.set_root_active(str(root1), False)
+                self.assertEqual(service.snapshot(fetch_submissions=False)["tasks"], [])
+                service.queue.set_root_active(str(root2), True)
+                self.assertEqual(
+                    [task["name"] for task in service.snapshot(fetch_submissions=False)["tasks"]],
+                    ["task-two"],
+                )
+
+    def test_new_root_is_inactive_until_enabled(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            root1 = base / "root-one"
+            root2 = base / "root-two"
+            root1.mkdir()
+            root2.mkdir()
+            config_path = base / "config.json"
+            config = load_config(path=config_path, roots=[str(root1)])
+            queue = QueueManager(config, JobManager(config), state_path=base / "queue.json")
+            snapshot = queue.set_roots([str(root1), str(root2)])
+            self.assertEqual(snapshot["roots"], [str(root1.resolve()), str(root2.resolve())])
+            self.assertEqual(snapshot["activeRoots"], [str(root1.resolve())])
+            snapshot = queue.set_root_active(str(root2), True)
+            self.assertEqual(snapshot["activeRoots"], [str(root1.resolve()), str(root2.resolve())])
 
     def test_queue_add_remove(self):
         with tempfile.TemporaryDirectory() as temp:

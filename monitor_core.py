@@ -2118,10 +2118,30 @@ class QueueManager:
     def _automation_cfg(self) -> dict[str, Any]:
         return self.config.setdefault("automation", {})
 
+    def _roots_locked(self) -> list[str]:
+        return [str(Path(value).expanduser().resolve()) for value in self.config.get("roots") or []]
+
+    def _active_roots_locked(self) -> list[str]:
+        roots = self._roots_locked()
+        monitor_cfg = self.config.setdefault("monitor", {})
+        if "activeRoots" not in monitor_cfg:
+            return list(roots)
+        active = {
+            str(Path(value).expanduser().resolve())
+            for value in monitor_cfg.get("activeRoots") or []
+        }
+        return [root for root in roots if root in active]
+
+    def active_roots(self) -> list[str]:
+        with self._lock:
+            return self._active_roots_locked()
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             self._sync_running_locked()
             items = copy.deepcopy(self._items)
+            roots = self._roots_locked()
+            active_roots = self._active_roots_locked()
         running = len(self.jobs.running())
         pending = sum(1 for item in items if item.get("status") == "pending")
         active = sum(1 for item in items if item.get("status") == "running")
@@ -2133,7 +2153,8 @@ class QueueManager:
             else 0.0
         )
         return {
-            "roots": list(self.config.get("roots") or []),
+            "roots": roots,
+            "activeRoots": active_roots,
             "capacity": int(self._automation_cfg().get("capacity") or 2),
             "cooldownSeconds": cooldown_seconds,
             "cooldownRemainingSeconds": round(cooldown_remaining, 1),
@@ -2348,9 +2369,38 @@ class QueueManager:
                 resolved.append(str(path))
         if not resolved:
             raise MonitorError("至少保留一个监控目录")
-        self.config["roots"] = resolved
-        config_path = Path(str(self.config.get("_configPath") or CONFIG_PATH))
-        save_config(self.config, config_path)
+        with self._lock:
+            monitor_cfg = self.config.setdefault("monitor", {})
+            if "activeRoots" not in monitor_cfg:
+                monitor_cfg["activeRoots"] = self._roots_locked()
+            active = {
+                str(Path(value).expanduser().resolve())
+                for value in monitor_cfg.get("activeRoots") or []
+            }
+            self.config["roots"] = resolved
+            monitor_cfg["activeRoots"] = [root for root in resolved if root in active]
+            config_path = Path(str(self.config.get("_configPath") or CONFIG_PATH))
+            save_config(self.config, config_path)
+        return self.snapshot()
+
+    def set_root_active(self, root: str, active: bool) -> dict[str, Any]:
+        path = str(Path(str(root)).expanduser().resolve())
+        with self._lock:
+            roots = self._roots_locked()
+            if path not in roots:
+                raise MonitorError(f"监控目录不存在: {path}")
+            monitor_cfg = self.config.setdefault("monitor", {})
+            active_roots = {
+                str(Path(value).expanduser().resolve())
+                for value in (monitor_cfg.get("activeRoots") if "activeRoots" in monitor_cfg else roots)
+            }
+            if active:
+                active_roots.add(path)
+            else:
+                active_roots.discard(path)
+            monitor_cfg["activeRoots"] = [value for value in roots if value in active_roots]
+            config_path = Path(str(self.config.get("_configPath") or CONFIG_PATH))
+            save_config(self.config, config_path)
         return self.snapshot()
 
     @staticmethod
@@ -2707,7 +2757,8 @@ class MonitorService:
         docker = self.docker_cache.get()
         now = time.time()
         roots = [Path(value).expanduser().resolve() for value in self.config.get("roots") or [DEFAULT_ROOT]]
-        task_roots = discover_task_roots(roots)
+        active_roots = [Path(value).expanduser().resolve() for value in self.queue.active_roots()]
+        task_roots = discover_task_roots(active_roots)
         tasks = [
             self._task_snapshot(root, stale_seconds, now, docker)
             for root in task_roots
@@ -2718,7 +2769,7 @@ class MonitorService:
         tasks.sort(key=self._task_sort_key, reverse=True)
         queue_snapshot = self.queue.snapshot()
         task_prompts: dict[str, str] = {}
-        workdir = roots[0] if roots else Path(str(self.config.get("roots", [DEFAULT_ROOT])[0]))
+        workdir = (active_roots or roots)[0] if (active_roots or roots) else Path(str(self.config.get("roots", [DEFAULT_ROOT])[0]))
         queue_sources = [
             item for item in (queue_snapshot.get("items") or [])
             if item.get("status") == "running" and item.get("source") == "platform"
@@ -2747,7 +2798,7 @@ class MonitorService:
                 prompt_sha256 = queue_prompt_sha256(prompt)
             task_prompts[task_name] = prompt_sha256
         app_sessions = scan_codex_sessions(
-            roots,
+            active_roots,
             task_prompts=task_prompts,
             max_idle_sec=float(cfg_monitor.get("sessionMaxIdleSeconds") or 6 * 3600),
         ) if task_prompts else []
@@ -2781,6 +2832,7 @@ class MonitorService:
         return {
             "generatedAt": utc_now(),
             "roots": [str(item) for item in roots],
+            "activeRoots": [str(item) for item in active_roots],
             "tasks": tasks,
             "summary": self._summary(tasks),
             "submissions": submissions,
@@ -3034,6 +3086,11 @@ class MonitorService:
             if not isinstance(roots, list):
                 raise MonitorError("roots 必须是数组")
             return self.queue.set_roots([str(item) for item in roots])
+        if action == "set-root-active":
+            return self.queue.set_root_active(
+                str(payload.get("root") or ""),
+                bool(payload.get("active")),
+            )
         if action == "set-capacity":
             return self.queue.set_capacity(int(payload.get("capacity") or 0))
         if action == "set-cooldown":
