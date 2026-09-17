@@ -1,0 +1,1583 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>0917 · Pair-wise 操作台</title>
+  <style>
+    @font-face {
+      font-family: "Monitor Sans";
+      src: url("/static/fonts/manrope-latin-wght-normal.woff2") format("woff2");
+      font-weight: 200 800;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: "Monitor Mono";
+      src: url("/static/fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2");
+      font-weight: 100 800;
+      font-display: swap;
+    }
+
+    :root {
+      --bg: #1d2328;
+      --panel: #252c31;
+      --panel-soft: #2c3439;
+      --text: #e8ece7;
+      --muted: #aab3b0;
+      --faint: #7f8986;
+      --line: #394349;
+      --line-strong: #536067;
+      --a: #d09a50;
+      --a-soft: #3c3222;
+      --b: #65a9b6;
+      --b-soft: #233d43;
+      --ok: #6fb58a;
+      --warn: #d0a154;
+      --bad: #d2776e;
+      --info: #78a9dd;
+      --sans: "Monitor Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --mono: "Monitor Mono", "SFMono-Regular", Consolas, monospace;
+    }
+
+    html[data-theme="light"] {
+      --bg: #f6f5f0;
+      --panel: #fffefa;
+      --panel-soft: #f0f1ed;
+      --text: #202a33;
+      --muted: #6f7a83;
+      --faint: #929ba2;
+      --line: #d9ddd9;
+      --line-strong: #bdc5c0;
+      --a: #a76a13;
+      --a-soft: #f7eddc;
+      --b: #247487;
+      --b-soft: #e2f0f1;
+      --ok: #2f7b55;
+      --warn: #a66c15;
+      --bad: #b2473f;
+      --info: #356da8;
+    }
+
+    * { box-sizing: border-box; }
+    html { min-height: 100%; background: var(--bg); }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background: var(--bg);
+      font-family: var(--sans);
+      font-size: 13px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, input { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible, summary:focus-visible {
+      outline: 2px solid var(--info);
+      outline-offset: 2px;
+    }
+    button, summary { -webkit-tap-highlight-color: transparent; }
+    a { color: inherit; }
+
+    .app-shell { min-height: 100vh; }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: grid;
+      grid-template-columns: minmax(250px, 1fr) auto minmax(260px, 1fr);
+      align-items: center;
+      gap: 18px;
+      min-height: 64px;
+      padding: 10px clamp(16px, 3vw, 34px);
+      background: color-mix(in srgb, var(--bg) 94%, transparent);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(10px);
+    }
+    .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .brand-mark {
+      display: grid;
+      grid-template-columns: repeat(2, 12px);
+      gap: 2px;
+      width: 26px;
+      height: 26px;
+      flex: 0 0 auto;
+    }
+    .brand-mark span { border: 1px solid var(--line-strong); background: var(--panel); }
+    .brand-mark span:first-child { background: var(--a-soft); border-color: var(--a); }
+    .brand-mark span:last-child { background: var(--b-soft); border-color: var(--b); }
+    .eyebrow {
+      margin: 0;
+      color: var(--faint);
+      font: 600 9px/1.2 var(--mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    h1 { margin: 2px 0 0; font-size: 17px; line-height: 1.15; letter-spacing: -.02em; }
+    .top-summary { color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .top-summary strong { color: var(--text); font: 700 13px/1 var(--mono); }
+    .top-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
+    .sync-state { min-width: 76px; color: var(--faint); font: 500 10px/1.3 var(--mono); text-align: right; }
+    .sync-state.error { color: var(--bad); }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr);
+      min-height: calc(100vh - 64px);
+    }
+    .task-index {
+      position: sticky;
+      top: 64px;
+      align-self: start;
+      height: calc(100vh - 64px);
+      overflow: auto;
+      padding: 18px 14px 24px 22px;
+      border-right: 1px solid var(--line);
+      background: color-mix(in srgb, var(--panel-soft) 62%, var(--bg));
+    }
+    .section-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin: 0 0 9px;
+      color: var(--faint);
+      font: 650 9px/1.2 var(--mono);
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+    .search-box {
+      width: 100%;
+      min-height: 34px;
+      padding: 7px 9px;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      background: var(--panel);
+    }
+    .search-box::placeholder { color: var(--faint); }
+    .filter-row { display: flex; gap: 4px; margin: 8px 0 12px; }
+    .filter-row button {
+      flex: 1;
+      padding: 5px 3px;
+      border: 1px solid transparent;
+      border-radius: 3px;
+      background: transparent;
+      color: var(--faint);
+      cursor: pointer;
+      font-size: 10px;
+    }
+    .filter-row button.active { border-color: var(--line); background: var(--panel); color: var(--text); }
+    .task-list { display: grid; gap: 3px; }
+    .task-index-item {
+      position: relative;
+      display: block;
+      width: 100%;
+      border: 1px solid transparent;
+      border-radius: 3px;
+      background: transparent;
+    }
+    .task-index-item:hover { border-color: var(--line); background: var(--panel); }
+    .task-index-item.active { border-color: var(--line-strong); background: var(--panel); }
+    .task-index-item.is-hidden { opacity: .62; }
+    .task-index-main {
+      display: block;
+      width: 100%;
+      padding: 9px 46px 9px 8px;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    .task-hide-btn {
+      position: absolute;
+      top: 6px;
+      right: 5px;
+      min-height: 20px;
+      padding: 2px 5px;
+      border: 1px solid transparent;
+      border-radius: 2px;
+      background: transparent;
+      color: var(--faint);
+      cursor: pointer;
+      font: 550 8px/1.2 var(--mono);
+      opacity: .35;
+    }
+    .task-index-item:hover .task-hide-btn, .task-hide-btn:focus-visible { opacity: 1; border-color: var(--line); }
+    .task-hide-btn.restore { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); opacity: 1; }
+    .hidden-toggle {
+      display: none;
+      margin: -5px 0 10px;
+      padding: 4px 7px;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      background: var(--panel);
+      color: var(--muted);
+      cursor: pointer;
+      font: 550 9px/1.3 var(--mono);
+    }
+    .hidden-toggle.visible { display: inline-block; }
+    .hidden-toggle.active { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, var(--line)); }
+    .task-index-name { margin: 0 0 5px; font-size: 11px; font-weight: 700; line-height: 1.35; }
+    .task-index-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; color: var(--faint); font: 500 9px/1.2 var(--mono); }
+    .mini-sides { display: flex; align-items: center; gap: 4px; }
+    .mini-side { display: inline-grid; place-items: center; width: 17px; height: 15px; border: 1px solid var(--line); color: var(--faint); font: 700 8px/1 var(--mono); }
+    .mini-side[data-side="A"].running { color: var(--warn); border-color: var(--warn); }
+    .mini-side[data-side="B"].running { color: var(--warn); border-color: var(--warn); }
+    .mini-side.done { color: var(--ok); border-color: var(--ok); }
+    .mini-side.failed, .mini-side.stale { color: var(--bad); border-color: var(--bad); }
+    .mini-dot { display:inline-grid; place-items:center; width:13px; height:13px; padding:0; border:1px solid var(--line-strong); border-radius:50%; background:transparent; color:var(--faint); font:700 7px/1 var(--mono); }
+    .mini-dot.running { border-color:var(--warn); background:color-mix(in srgb,var(--warn) 38%,transparent); color:var(--text); }
+    .mini-dot.done { border-color:var(--ok); background:var(--ok); color:var(--bg); }
+    .mini-dot.failed, .mini-dot.stale { border-color:var(--bad); background:color-mix(in srgb,var(--bad) 28%,transparent); color:var(--text); }
+    .mini-dot.cancelled { opacity:.38; }
+    .index-empty, .main-empty { padding: 18px 4px; color: var(--faint); font-size: 11px; }
+
+    .automation-panel {
+      display: grid;
+      grid-template-columns: minmax(250px, .9fr) minmax(360px, 1.4fr) minmax(200px, .65fr);
+      gap: 0;
+      padding: 16px clamp(16px, 3vw, 34px) 18px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--panel) 88%, var(--bg));
+    }
+    .automation-panel[hidden] { display: none; }
+    .automation-col { min-width: 0; padding: 0 18px; border-left: 1px solid var(--line); }
+    .automation-col:first-child { padding-left: 0; border-left: 0; }
+    .automation-col:last-child { padding-right: 0; }
+    .automation-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 9px; color: var(--text); font-size: 12px; font-weight: 700; }
+    .automation-title span { color: var(--faint); font: 550 9px/1.3 var(--mono); }
+    .root-list, .queue-list { display: grid; gap: 5px; max-height: 180px; overflow: auto; }
+    .root-item, .queue-item {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 7px 8px;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      background: var(--panel);
+    }
+    .root-path, .queue-name { min-width: 0; color: var(--muted); font: 500 9px/1.4 var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .queue-name { color: var(--text); font-family: var(--sans); font-size: 10px; font-weight: 700; }
+    .queue-sub { margin-top: 2px; color: var(--faint); font: 500 8px/1.35 var(--mono); }
+    .queue-item[data-status="running"] { border-color: color-mix(in srgb, var(--warn) 50%, var(--line)); }
+    .queue-item[data-status="failed"] { border-color: color-mix(in srgb, var(--bad) 50%, var(--line)); }
+    .queue-item[data-status="done"], .queue-item[data-status="skipped"] { opacity: .58; }
+    .queue-buttons { display: flex; gap: 3px; }
+    .root-remove { min-height: 22px; padding: 2px 5px; border: 1px solid var(--line); border-radius: 2px; background: transparent; color: var(--faint); cursor: pointer; font: 550 9px/1 var(--mono); }
+    .root-remove:hover { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+    .queue-buttons button { min-height: 22px; padding: 2px 5px; border: 1px solid var(--line); border-radius: 2px; background: transparent; color: var(--faint); cursor: pointer; font: 550 9px/1 var(--mono); }
+    .queue-buttons button:hover { color: var(--text); background: var(--panel-soft); }
+    .automation-add, .capacity-row, .queue-add-controls { display: flex; gap: 6px; margin-top: 8px; }
+    .automation-add input, .capacity-row input, .queue-add-controls select {
+      min-width: 0;
+      flex: 1;
+      min-height: 30px;
+      padding: 5px 7px;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      background: var(--panel);
+      color: var(--text);
+      font: 500 9px/1.3 var(--mono);
+    }
+    .queue-actions { display: flex; gap: 6px; margin-top: 9px; }
+    .queue-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-top: 10px; }
+    .queue-stat { padding: 7px; border: 1px solid var(--line); background: var(--panel); }
+    .queue-stat b { display: block; color: var(--text); font: 700 15px/1 var(--mono); }
+    .queue-stat span { display: block; margin-top: 3px; color: var(--faint); font-size: 8px; }
+    .queue-badge { color: var(--muted); font: 600 9px/1 var(--mono); }
+
+    .main-pane { min-width: 0; padding: 28px clamp(22px, 5vw, 72px) 48px; }    .task-detail { max-width: 1160px; margin: 0 auto; }
+    .task-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 18px; }
+    .task-title { margin: 0; max-width: 800px; font-size: clamp(22px, 2.6vw, 31px); line-height: 1.18; letter-spacing: -.035em; }
+    .task-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 9px; color: var(--muted); font-size: 11px; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 21px;
+      padding: 2px 6px;
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      background: var(--panel);
+      color: var(--muted);
+      font: 600 9px/1.2 var(--mono);
+    }
+    .chip::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--faint); }
+    .chip.running::before { background: var(--warn); }
+    .chip.attention::before { background: var(--bad); }
+    .chip.done::before { background: var(--ok); }
+    .task-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+    .btn {
+      min-height: 32px;
+      padding: 6px 10px;
+      border: 1px solid var(--line-strong);
+      border-radius: 3px;
+      background: var(--panel);
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 650;
+    }
+    .btn:hover { background: var(--panel-soft); }
+    .btn:disabled { cursor: not-allowed; opacity: .42; }
+    .btn.primary { border-color: var(--text); background: var(--text); color: var(--bg); }
+    .btn.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 58%, var(--line)); }
+    .btn.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+    .btn.icon { width: 32px; padding: 0; display: grid; place-items: center; }
+
+    .control-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 10px 0;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+    .control-left, .control-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .control-note { color: var(--faint); font-size: 10px; }
+    .switch { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; user-select: none; font-size: 11px; }
+    .switch input { position: absolute; opacity: 0; pointer-events: none; }
+    .switch-track { position: relative; width: 30px; height: 17px; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--panel-soft); }
+    .switch-track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%; background: var(--faint); transition: transform .16s ease, background-color .16s ease; }
+    .switch input:checked + .switch-track { background: color-mix(in srgb, var(--ok) 16%, var(--panel)); }
+    .switch input:checked + .switch-track::after { transform: translateX(13px); background: var(--ok); }
+
+    .prompt-block {
+      margin-top: 16px;
+      padding: 12px 13px;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      background: var(--panel);
+    }
+    .prompt-block p {
+      margin: 7px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .workflow-list { border-top: 1px solid var(--line); }
+    .workflow-item {
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr) auto;
+      gap: 9px;
+      align-items: start;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .workflow-item:last-child { border-bottom: 0; }
+    .workflow-icon { color: var(--faint); font: 700 12px/1.35 var(--mono); text-align: center; }
+    .workflow-item[data-state="done"] .workflow-icon { color: var(--ok); }
+    .workflow-item[data-state="current"] .workflow-icon { color: var(--warn); }
+    .workflow-item[data-state="blocked"] .workflow-icon { color: var(--bad); }
+    .workflow-label { color: var(--text); font-size: 11px; font-weight: 700; }
+    .workflow-detail { margin-top: 2px; color: var(--faint); font: 500 9px/1.45 var(--mono); }
+    .workflow-state { color: var(--faint); font: 600 9px/1.3 var(--mono); white-space: nowrap; }
+    .workflow-item[data-state="done"] .workflow-state { color: var(--ok); }
+    .workflow-item[data-state="current"] .workflow-state { color: var(--warn); }
+    .workflow-item[data-state="blocked"] .workflow-state { color: var(--bad); }
+    .prompt-text {
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.65;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .todo-panel { margin-top: 10px; border-top: 1px solid var(--line); }
+    .todo-panel > summary { padding: 8px 0 6px; color: var(--muted); font: 600 9px/1.35 var(--mono); }
+    .todo-list { padding-bottom: 4px; }
+    .todo-item { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 7px; padding: 5px 0; border-top: 1px solid var(--line); }
+    .todo-item:first-child { border-top: 0; }
+    .todo-dot { color: var(--faint); font: 700 10px/1.4 var(--mono); text-align: center; }
+    .todo-item[data-status="completed"] .todo-dot, .todo-item[data-status="completed"] .todo-status { color: var(--ok); }
+    .todo-item[data-status="in_progress"] .todo-dot, .todo-item[data-status="in_progress"] .todo-status { color: var(--warn); }
+    .todo-text { color: var(--muted); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+    .todo-item[data-status="completed"] .todo-text { color: var(--faint); text-decoration: line-through; }
+    .todo-status { color: var(--faint); font: 550 8px/1.45 var(--mono); white-space: nowrap; }
+    .todo-empty { padding: 4px 0 8px; color: var(--faint); font: 500 9px/1.5 var(--mono); }
+    .log-panel {
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      background: color-mix(in srgb, var(--panel-soft) 78%, var(--panel));
+    }
+    .log-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 8px 9px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font: 600 10px/1.3 var(--mono);
+    }
+    .log-head strong { color: var(--text); font-size: 11px; }
+    .log-head span { margin-left: 6px; color: var(--faint); }
+    .log-stream {
+      height: 390px;
+      overflow: auto;
+      padding: 8px 9px 12px;
+      scrollbar-color: var(--line-strong) transparent;
+      overscroll-behavior: contain;
+    }
+    .log-attempt {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      margin: 8px -9px 5px;
+      padding: 5px 9px;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--panel) 94%, var(--side-accent, var(--line)));
+      color: var(--muted);
+      font: 650 9px/1.35 var(--mono);
+    }
+    .side-panel[data-side="A"] .log-attempt { --side-accent: var(--a); }
+    .side-panel[data-side="B"] .log-attempt { --side-accent: var(--b); }
+    .log-attempt:first-child { margin-top: 0; border-top: 0; }
+    .log-line {
+      display: grid;
+      grid-template-columns: 46px minmax(0, 1fr);
+      gap: 7px;
+      padding: 5px 0;
+      border-top: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
+    }
+    .log-line:first-of-type { border-top: 0; }
+    .log-seq { color: var(--faint); font: 500 8px/1.45 var(--mono); }
+    .log-kind { color: var(--muted); font: 650 8px/1.45 var(--mono); text-transform: uppercase; }
+    .log-kind.tool { color: var(--b); }
+    .log-kind.assistant, .log-kind.done { color: var(--ok); }
+    .log-kind.warning { color: var(--warn); }
+    .log-kind.error { color: var(--bad); }
+    .log-title { color: var(--text); font-size: 10px; font-weight: 700; }
+    .log-detail { margin-top: 2px; color: var(--faint); font: 500 9px/1.5 var(--mono); overflow-wrap: anywhere; white-space: pre-wrap; }
+    .log-empty { padding: 12px 0; color: var(--faint); font-size: 10px; }
+    .log-bottom { min-height: 24px; padding: 3px 7px; font-size: 9px; }
+    .history-section { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 9px; }
+    .history-title { display: flex; align-items: center; justify-content: space-between; color: var(--faint); font: 650 9px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+    .attempt-list { margin-top: 4px; }
+    .attempt-entry { border-top: 1px solid var(--line); }
+    .attempt-entry:first-child { border-top: 0; }
+    .attempt-entry > summary { padding: 8px 0; color: var(--muted); font: 550 9px/1.35 var(--mono); }
+    .attempt-entry > summary::after { float: right; }
+    .attempt-summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-right: 18px; }
+    .attempt-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .attempt-state { flex: 0 0 auto; color: var(--faint); }
+    .attempt-state.running { color: var(--warn); }
+    .attempt-state.failed { color: var(--bad); }
+    .attempt-error { margin-top: 3px; color: var(--bad); font: 500 9px/1.4 var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .attempt-body { padding: 2px 0 10px; }
+    .attempt-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--faint); font: 500 9px/1.5 var(--mono); }
+    .attempt-events { max-height: 300px; overflow: auto; margin-top: 7px; border-top: 1px solid var(--line); }
+    .attempt-events .event-item { border-top: 0; border-bottom: 1px solid var(--line); }
+    .attempt-events .event-item:last-child { border-bottom: 0; }
+    .attempt-paths { margin-top: 7px; color: var(--faint); font: 500 8px/1.5 var(--mono); overflow-wrap: anywhere; }
+    .attempt-empty { padding: 8px 0; color: var(--faint); font-size: 10px; }
+
+    .candidate-race { margin-top: 20px; padding: 12px 0 14px; border-top: 2px solid var(--line-strong); border-bottom: 1px solid var(--line); }
+    .candidate-race-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .candidate-race-head h3 { margin: 0; font-size: 13px; }
+    .candidate-race-head span { color: var(--faint); font: 500 9px/1.4 var(--mono); }
+    .candidate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px; }
+    .candidate-card { min-width: 0; padding: 9px 10px; border: 1px solid var(--line); background: var(--panel); }
+    .candidate-card[data-health="running"] { border-color: color-mix(in srgb, var(--warn) 58%, var(--line)); }
+    .candidate-card[data-health="failed"], .candidate-card[data-health="blocked"] { border-color: color-mix(in srgb, var(--bad) 55%, var(--line)); }
+    .candidate-card[data-health="staged"], .candidate-card[data-health="clean"] { border-color: color-mix(in srgb, var(--ok) 50%, var(--line)); }
+    .side-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 20px; }
+    .side-panel {
+      min-width: 0;
+      padding: 14px 0 16px;
+      border-top: 2px solid var(--line-strong);
+    }
+    .side-panel[data-side="A"] { border-top-color: var(--a); }
+    .side-panel[data-side="B"] { border-top-color: var(--b); }
+    .side-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .side-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .side-letter { display: grid; place-items: center; width: 25px; height: 25px; flex: 0 0 auto; border: 1px solid var(--line); font: 700 12px/1 var(--mono); }
+    .side-panel[data-side="A"] .side-letter { color: var(--a); border-color: var(--a); background: var(--a-soft); }
+    .side-panel[data-side="B"] .side-letter { color: var(--b); border-color: var(--b); background: var(--b-soft); }
+    .side-name { margin: 0; font-size: 14px; line-height: 1.25; }
+    .side-phase { margin-top: 2px; color: var(--faint); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .side-metrics { display: flex; flex-wrap: wrap; gap: 6px 13px; margin: 12px 0 10px; color: var(--muted); font: 500 10px/1.3 var(--mono); }
+    .side-metrics strong { color: var(--text); font-weight: 700; }
+    .stage-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; margin: 10px 0 13px; }
+    .stage-cell { min-width: 0; }
+    .stage-bar { height: 2px; background: var(--line); }
+    .stage-cell.done .stage-bar { background: var(--ok); }
+    .stage-cell.current .stage-bar { background: var(--warn); }
+    .stage-cell span { display: block; margin-top: 4px; color: var(--faint); font: 500 8px/1 var(--mono); text-align: center; }
+    .stage-cell.done span, .stage-cell.current span { color: var(--muted); }
+    .summary {
+      min-height: 46px;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      background: var(--panel);
+    }
+    .summary-label { color: var(--faint); font: 650 8px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+    .summary p { margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+    .meta-block { margin-top: 10px; color: var(--faint); font: 500 9px/1.5 var(--mono); overflow-wrap: anywhere; }
+    .meta-block strong { color: var(--muted); font-weight: 600; }
+    .side-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+    .confirm-inline { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 9px; padding: 8px; border: 1px solid color-mix(in srgb, var(--bad) 45%, var(--line)); background: color-mix(in srgb, var(--bad) 5%, var(--panel)); font-size: 10px; }
+
+    .side-details, .utility-details { border-top: 1px solid var(--line); }
+    details > summary { list-style: none; cursor: pointer; }
+    details > summary::-webkit-details-marker { display: none; }
+    details > summary::after { content: "+"; float: right; color: var(--faint); font: 500 13px/1 var(--mono); }
+    details[open] > summary::after { content: "−"; }
+    .side-details > summary { margin-top: 12px; padding-top: 10px; color: var(--muted); font: 550 10px/1.3 var(--mono); }
+    .side-details-body { padding-top: 8px; }
+    .event-list { list-style: none; margin: 0; padding: 0; }
+    .event-item { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 8px; padding: 7px 0; border-top: 1px solid var(--line); }
+    .event-item:first-child { border-top: 0; }
+    .event-kind { padding-top: 1px; color: var(--faint); font: 650 8px/1.3 var(--mono); text-transform: uppercase; }
+    .event-kind.tool { color: var(--b); }
+    .event-kind.assistant, .event-kind.done { color: var(--ok); }
+    .event-kind.warning { color: var(--warn); }
+    .event-kind.error { color: var(--bad); }
+    .event-title { font-size: 10px; font-weight: 700; }
+    .event-detail { margin-top: 2px; color: var(--faint); font: 500 9px/1.45 var(--mono); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+    .empty-events { padding: 10px 0; color: var(--faint); font-size: 10px; }
+    .raw-log { border-top: 1px solid var(--line); margin-top: 7px; }
+    .raw-log > summary { padding-top: 8px; color: var(--faint); font: 500 9px/1.3 var(--mono); }
+    .raw-log pre { max-height: 280px; overflow: auto; margin: 8px 0 0; padding: 9px; border: 1px solid var(--line); background: var(--panel-soft); color: var(--muted); font: 500 9px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+    .utility-details { max-width: 1160px; margin: 26px auto 0; padding-top: 4px; border-top: 1px solid var(--line-strong); }
+    .utility-details > summary { padding: 12px 0; color: var(--text); font-size: 13px; font-weight: 700; }
+    .utility-summary { margin-left: 8px; color: var(--faint); font: 500 10px/1.2 var(--mono); }
+    .utility-body { padding: 2px 0 14px; }
+    .sub-stats { display: flex; flex-wrap: wrap; gap: 16px; margin: 0 0 10px; color: var(--muted); font-size: 11px; }
+    .sub-stats strong { color: var(--text); font: 700 13px/1 var(--mono); }
+    .sub-list { border-top: 1px solid var(--line); }
+    .sub-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 14px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+    .sub-item.matched { padding-left: 9px; border-left: 2px solid var(--ok); }
+    .sub-title { min-width: 0; font-size: 11px; font-weight: 700; }
+    .sub-line { min-width: 0; margin-top: 3px; color: var(--faint); font: 500 9px/1.4 var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sub-side { text-align: right; }
+    .sub-status { display: inline-block; color: var(--muted); font: 600 9px/1.3 var(--mono); }
+    .sub-status.ok, .sub-status.done { color: var(--ok); }
+    .sub-status.warn { color: var(--warn); }
+    .sub-status.bad { color: var(--bad); }
+    .sub-time { display: block; margin-top: 3px; color: var(--faint); font: 500 9px/1.3 var(--mono); }
+    .rail-error { padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--warn) 42%, var(--line)); background: color-mix(in srgb, var(--warn) 5%, var(--panel)); color: var(--muted); font-size: 10px; }
+    .auto-log-list { list-style: none; margin: 0; padding: 0; }
+    .auto-log-list li { padding: 7px 0; border-top: 1px solid var(--line); color: var(--faint); font: 500 9px/1.5 var(--mono); }
+    .auto-log-list li:first-child { border-top: 0; }
+
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 60;
+      max-width: min(400px, calc(100vw - 36px));
+      padding: 9px 11px;
+      border: 1px solid var(--line-strong);
+      background: var(--text);
+      color: var(--bg);
+      box-shadow: 0 8px 28px rgba(20, 28, 34, .14);
+      transform: translateY(8px);
+      opacity: 0;
+      pointer-events: none;
+      transition: transform .18s ease, opacity .18s ease;
+      font-size: 11px;
+    }
+    .toast.show { transform: none; opacity: 1; }
+    .toast.error { background: var(--bad); color: white; }
+    .skeleton { min-height: 100px; border: 1px solid var(--line); background: var(--panel-soft); }
+    .muted { color: var(--faint); }
+
+    @media (max-width: 1050px) {
+      .automation-panel { grid-template-columns: 1fr 1.4fr; }
+      .automation-col.capacity-col { grid-column: 1 / -1; padding: 12px 0 0; border-left: 0; border-top: 1px solid var(--line); }
+    }
+    @media (max-width: 900px) {
+      .topbar { grid-template-columns: 1fr auto; min-height: auto; padding: 10px 14px; }
+      .top-summary { grid-column: 1 / -1; order: 3; }
+      .layout { display: block; }
+      .automation-panel { grid-template-columns: 1fr; padding: 14px; }
+      .automation-col { padding: 12px 0 0; border-left: 0; border-top: 1px solid var(--line); }
+      .automation-col:first-child { padding-top: 0; border-top: 0; }
+      .automation-col.capacity-col { grid-column: auto; }
+      .task-index { position: static; height: auto; padding: 13px 14px; border-right: 0; border-bottom: 1px solid var(--line); }
+      .task-list { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 2px; }
+      .task-index-item { min-width: 210px; border-color: var(--line); background: var(--panel); }
+      .search-box { max-width: 320px; }
+      .filter-row { max-width: 320px; }
+      .main-pane { padding: 22px 16px 36px; }
+      .task-head { display: block; }
+      .task-actions { justify-content: flex-start; margin-top: 13px; }
+      .side-grid, .candidate-grid { grid-template-columns: 1fr; gap: 6px; }
+    }
+    @media (max-width: 560px) {
+      .topbar { grid-template-columns: 1fr; gap: 8px; }
+      .brand-mark { display: none; }
+      .brand h1 { font-size: 15px; }
+      .top-actions { grid-column: 1; justify-content: flex-start; }
+      .top-actions .btn span { display: none; }
+      .top-summary { grid-column: 1; order: 3; }
+      .control-row { align-items: flex-start; flex-direction: column; }
+      .task-title { font-size: 23px; }
+      .sub-item { grid-template-columns: 1fr; }
+      .sub-side { text-align: left; }
+    }
+    @media (hover: none) {
+      .task-hide-btn { opacity: 1; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+        <div>
+          <p class="eyebrow">sologsb-0917</p>
+          <h1>Pair-wise 任务操作台</h1>
+        </div>
+      </div>
+      <div class="top-summary" id="topSummary" aria-live="polite">正在读取状态…</div>
+      <div class="top-actions">
+        <a class="btn ghost" href="/tasks">任务管理</a>
+        <button class="btn ghost" id="refreshBtn" type="button">刷新 <span>提交</span></button>
+        <button class="btn icon" id="themeBtn" type="button" aria-label="切换主题">◐</button>
+        <div class="sync-state" id="syncState">连接中</div>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="task-index" aria-label="任务索引">
+        <div class="section-label"><span>任务</span><span id="taskCount">0</span></div>
+        <input class="search-box" id="searchInput" type="search" placeholder="搜索任务 / 项目" autocomplete="off">
+        <div class="filter-row" id="filterRow">
+          <button type="button" data-filter="all" class="active">全部</button>
+          <button type="button" data-filter="active">执行中</button>
+          <button type="button" data-filter="attention">需处理</button>
+        </div>
+        <button class="hidden-toggle" id="hiddenToggle" type="button" aria-pressed="false">已屏蔽 0</button>
+        <div class="task-list" id="taskList"><div class="skeleton"></div></div>
+      </aside>
+
+      <main class="main-pane" id="mainPane">
+        <div class="skeleton" style="min-height:320px"></div>
+      </main>
+    </div>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    const state = {
+      data: null,
+      selectedId: null,
+      query: "",
+      filter: "all",
+      showHidden: false,
+      automationOpen: false,
+      hiddenTaskIds: new Set(),
+      loading: false,
+      lastError: "",
+      errorCount: 0,
+      logCache: new Map(),
+      historyCache: new Map(),
+      timer: null,
+    };
+
+    const STATUS_LABELS = {
+      prepared: "已接入",
+      prompt_ready: "提示词就绪",
+      repo_ready: "仓库就绪",
+      running: "执行中",
+      candidates_running: "候选竞速中",
+      candidates_ready: "候选已映射",
+      a_staged: "A 已校验",
+      b_staged: "B 已校验",
+      semantic_review_required: "待语义审核",
+      ab_clean: "A/B 已发布",
+      verified: "已验证",
+      gsb_ready: "GSB 就绪",
+      recorded: "已录屏",
+      complete: "已完成",
+      attempt_invalid: "本轮无效",
+      blocked: "已阻断",
+      staged: "已校验",
+      clean: "已发布",
+      invalidated: "已作废",
+      cancelled: "未进前二",
+      idle: "未启动",
+    };
+
+    const HEALTH_LABELS = {
+      running: "执行中",
+      starting: "启动中",
+      stale: "静默",
+      failed: "失败",
+      blocked: "已阻断",
+      staged: "已校验",
+      clean: "已发布",
+      idle: "未启动",
+    };
+
+    const $ = (selector) => document.querySelector(selector);
+    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[char]));
+
+    function fmtDuration(seconds) {
+      if (seconds === null || seconds === undefined || Number.isNaN(Number(seconds))) return "—";
+      let value = Math.max(0, Math.floor(Number(seconds)));
+      const days = Math.floor(value / 86400);
+      value %= 86400;
+      const hours = Math.floor(value / 3600);
+      value %= 3600;
+      const minutes = Math.floor(value / 60);
+      const secs = value % 60;
+      if (days) return `${days}d ${hours}h`;
+      if (hours) return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+      if (minutes) return `${minutes}m ${String(secs).padStart(2, "0")}s`;
+      return `${secs}s`;
+    }
+
+    function fmtAge(seconds) {
+      if (seconds === null || seconds === undefined) return "无活动";
+      const value = Number(seconds);
+      if (value < 8) return "刚刚";
+      if (value < 60) return `${Math.floor(value)}s 前`;
+      if (value < 3600) return `${Math.floor(value / 60)}m 前`;
+      return `${Math.floor(value / 3600)}h 前`;
+    }
+
+    function fmtClock(value) {
+      if (!value) return "—";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return String(value).slice(0, 19).replace("T", " ");
+      return new Intl.DateTimeFormat("zh-CN", {
+        month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+      }).format(date);
+    }
+
+    function statusLabel(value) {
+      return STATUS_LABELS[String(value || "").toLowerCase()] || value || "未知";
+    }
+
+    function stateClass(value) {
+      const key = String(value || "").toLowerCase();
+      if (["running", "starting"].includes(key)) return "running";
+      if (["blocked", "attempt_invalid", "invalidated", "stale", "failed"].includes(key)) return "attention";
+      if (["complete", "recorded", "gsb_ready", "verified", "ab_clean", "semantic_review_required"].includes(key)) return "done";
+      return "";
+    }
+
+    function sideClass(side) {
+      const status = String(side?.status || "").toLowerCase();
+      const health = String(side?.health || "").toLowerCase();
+      if (side?.active || health === "running" || health === "starting") return "running";
+      if (["stale", "failed", "blocked"].includes(health) || ["blocked", "attempt_invalid", "invalidated"].includes(status)) return "failed";
+      if (status === "cancelled") return "";
+      if (["staged", "clean"].includes(status)) return "done";
+      return "";
+    }
+
+    function subStatusClass(value) {
+      const key = String(value || "").toUpperCase();
+      if (["PASSED", "COMPLETED", "ACCEPTED", "DONE"].some((x) => key.includes(x)) || /通过|完成/.test(key)) return "ok";
+      if (["FAILED", "REJECTED", "ERROR"].some((x) => key.includes(x)) || /失败|废弃|拒绝/.test(key)) return "bad";
+      if (["QC", "REVIEW", "SUBMITTED", "PENDING", "RUNNING"].some((x) => key.includes(x)) || /质检中|待质检|待返修/.test(key)) return "warn";
+      return "";
+    }
+
+    function showToast(message, error = false) {
+      const node = $("#toast");
+      node.textContent = message;
+      node.className = `toast show${error ? " error" : ""}`;
+      clearTimeout(node._timer);
+      node._timer = setTimeout(() => { node.className = "toast"; }, 3200);
+    }
+
+    function searchableText(task) {
+      return [task.name, task.projectCode, task.projectName, task.taskType, task.taskNo, task.repoName, task.repoUrl].join(" ").toLowerCase();
+    }
+
+    function taskSortTime(task) {
+      const values = [task.updatedAt, task.createdAt];
+      for (const side of Object.values(task.sides || {})) {
+        values.push(side.lastActivityAt, side.startedAt);
+      }
+      return Math.max(...values.map((value) => {
+        const time = value ? new Date(value).getTime() : 0;
+        return Number.isFinite(time) ? time : 0;
+      }), 0);
+    }
+
+    function visibleTasks() {
+      const tasks = [...(state.data?.tasks || [])].sort((a, b) => taskSortTime(b) - taskSortTime(a));
+      const query = state.query.trim().toLowerCase();
+      return tasks.filter((task) => {
+        if (isTaskHidden(task.id) && !state.showHidden) return false;
+        if (query && !searchableText(task).includes(query)) return false;
+        if (state.filter === "active") {
+          return Object.values(task.sides || {}).some((side) => side.active)
+            || Object.values(task.candidates || {}).some((candidate) => candidate.active);
+        }
+        if (state.filter === "attention") return Boolean(task.needsAttention);
+        return true;
+      });
+    }
+
+    function sideSignalAge(task) {
+      const values = [...Object.values(task.sides || {}), ...Object.values(task.candidates || {})]
+        .filter((side) => side.silentSeconds !== null && side.silentSeconds !== undefined)
+        .map((side) => Number(side.silentSeconds));
+      return values.length ? Math.min(...values) : null;
+    }
+
+    function renderTop() {
+      const summary = state.data?.summary || {};
+      const attention = (summary.staleSides || 0) + (summary.blockedSides || 0);
+      $("#topSummary").innerHTML = `<strong>${summary.tasks || 0}</strong> 个任务 · <strong>${summary.activeSides || 0}</strong> 个执行中 · <strong>${attention}</strong> 个需处理`;
+      const total = (state.data?.tasks || []).length;
+      const visible = state.showHidden ? total : total - state.hiddenTaskIds.size;
+      $("#taskCount").textContent = String(Math.max(0, visible));
+      renderHiddenToggle();
+    }
+
+    function renderTaskList() {
+      const tasks = visibleTasks();
+      if (!tasks.length) {
+        $("#taskList").innerHTML = `<div class="index-empty">${state.data?.tasks?.length ? "没有符合筛选条件的任务。" : "未发现 sologsb 任务。"}</div>`;
+        return;
+      }
+      $("#taskList").innerHTML = tasks.map((task) => {
+        const sides = task.sides || {};
+        const candidates = task.candidates || [];
+        const candidateSignals = candidates.length ? candidates : [];
+        const mini = candidateSignals.map((item) => {
+          const label = item.mappedSide || "";
+          const status = String(item.status || "idle").toLowerCase();
+          const cls = sideClass(item);
+          const title = `${item.candidateId || "候选"}${item.mappedSide ? ` → ${item.mappedSide}` : ""} · ${HEALTH_LABELS[item.health] || item.phase || status || "未启动"}`;
+          return `<span class="mini-dot ${cls} ${esc(status)}" title="${esc(title)}">${esc(label)}</span>`;
+        }).join("") || ["A", "B"].map((key) => {
+          const side = sides[key] || {};
+          return `<span class="mini-side ${sideClass(side)}" data-side="${key}" title="${esc(HEALTH_LABELS[side.health] || side.phase || "未启动")}">${key}</span>`;
+        }).join("");
+        const hidden = isTaskHidden(task.id);
+        return `<div class="task-index-item ${task.id === state.selectedId ? "active" : ""} ${hidden ? "is-hidden" : ""}">
+          <button class="task-index-main" type="button" data-command="select-task" data-task-id="${esc(task.id)}">
+            <p class="task-index-name">${esc(task.name)}</p>
+            <div class="task-index-meta">
+              <span>${esc(task.projectCode || task.taskType || "—")} · ${fmtAge(sideSignalAge(task))}</span>
+              <span class="mini-sides">${mini}</span>
+            </div>
+          </button>
+          <button class="task-hide-btn ${hidden ? "restore" : ""}" type="button"
+            data-command="${hidden ? "restore-task" : "hide-task"}" data-task-id="${esc(task.id)}"
+            title="${hidden ? "恢复显示" : "屏蔽项目"}">${hidden ? "恢复" : "屏蔽"}</button>
+        </div>`;
+      }).join("");
+    }
+
+    function renderDetail() {
+      const task = (state.data?.tasks || []).find((item) => item.id === state.selectedId);
+      if (!task || (isTaskHidden(task.id) && !state.showHidden)) {
+        $("#mainPane").innerHTML = `<div class="main-empty">${task ? "该项目已屏蔽，可在左侧“已屏蔽”列表中恢复。" : "选择左侧任务查看 A/B 状态。"}</div>`;
+        return;
+      }
+      const artifacts = task.artifacts || {};
+      const artifactTags = [
+        ["语义 A", artifacts.semanticA], ["语义 B", artifacts.semanticB], ["证据", artifacts.evidence],
+        ["审计", artifacts.audit], ["GSB", artifacts.gsb],
+      ].map(([label, ok]) => `<span class="chip ${ok ? "done" : ""}">${esc(label)}${ok ? " 已完成" : " 未完成"}</span>`).join("");
+      $("#mainPane").innerHTML = `
+        <article class="task-detail">
+          <header class="task-head">
+            <div>
+              <h2 class="task-title">${esc(task.name)}</h2>
+              <div class="task-meta">
+                <span class="chip ${stateClass(task.stateStatus)}">${esc(statusLabel(task.stateStatus))}</span>
+                ${task.taskType ? `<span>${esc(task.taskType)}</span>` : ""}
+                ${task.difficulty ? `<span>${esc(task.difficulty)}</span>` : ""}
+                ${task.projectCode ? `<span class="mono">${esc(task.projectCode)}</span>` : ""}
+                ${task.initialSnapshot ? `<span class="mono" title="初始快照">${esc(task.initialSnapshot.slice(0, 12))}</span>` : ""}
+              </div>
+            </div>
+            <div class="task-actions">
+              <button class="btn primary" type="button" data-command="run-both" data-task-id="${esc(task.id)}" ${bothDisabled(task) ? "disabled" : ""}>并行续跑 A+B</button>
+              <button class="btn" type="button" data-command="copy-path" data-copy="${esc(task.taskRoot)}">复制目录</button>
+              ${task.repoUrl ? `<a class="btn ghost" href="${esc(task.repoUrl)}" target="_blank" rel="noreferrer">GitHub ↗</a>` : ""}
+            </div>
+          </header>
+
+          <div class="control-row">
+            <div class="control-left">
+              <span class="control-note">执行、自动重试和异常恢复由 sologsb 技能处理</span>
+            </div>
+            <div class="control-right">
+              <span class="control-note">更新 ${esc(fmtClock(task.updatedAt))}</span>
+              <button class="btn ghost" type="button" data-command="refresh" aria-label="立即刷新">↻</button>
+            </div>
+          </div>
+
+          <details class="utility-details prompt-utility" data-persist="prompt">
+            <summary>项目提示词 <span class="utility-summary">${esc((task.promptText || "未读取到提示词文件。").length)} 字</span></summary>
+            <div class="utility-body"><p class="prompt-text">${esc(task.promptText || "未读取到提示词文件。")}</p></div>
+          </details>
+
+          ${renderCandidateRace(task)}
+          ${(task.candidates || []).length ? "" : `<div class="side-grid">${renderSide(task, "A")}${renderSide(task, "B")}</div>`}
+
+          <details class="utility-details" data-persist="submission">
+            <summary>SOLO2 提交 <span class="utility-summary" id="submissionSummary">读取中…</span></summary>
+            <div class="utility-body" id="submissionContent"></div>
+          </details>
+
+          <div class="task-meta" style="margin-top:18px">${artifactTags}</div>
+        </article>`;
+    }
+
+    function bothDisabled(task) {
+      const sides = Object.values(task.sides || {});
+      const candidates = Object.values(task.candidates || {});
+      if (candidates.some((item) => item.active)) return true;
+      if (["candidates_running", "candidates_ready"].includes(String(task.stateStatus || ""))) return true;
+      if (sides.some((side) => side.active)) return true;
+      if (!sides.length || sides.some((side) => !side.status)) return true;
+      return sides.every((side) => ["staged", "clean"].includes(side.status));
+    }
+
+    function historyAttemptsFor(task, sideKey) {
+      const isCandidate = /^candidate-\d+$/i.test(String(sideKey || ""));
+      const candidate = isCandidate ? (task.candidates || []).find((item) => String(item.candidateId || "").toLowerCase() === String(sideKey).toLowerCase()) || {} : {};
+      const side = isCandidate ? candidate : (task.sides || {})[sideKey] || {};
+      const cached = state.historyCache.get(`${task.id}:${sideKey}`);
+      let attempts = cached?.attempts ? cached.attempts.map((item) => ({ ...item, events: [...(item.events || [])] })) : null;
+      if (!attempts) {
+        attempts = (side.history || []).map((item) => ({ ...item, events: [] }));
+      }
+      attempts = attempts.filter((item) => item.source === "runtime");
+      const current = attempts.find((item) => item.isCurrent) || attempts[attempts.length - 1];
+      if (current && (side.events || []).length) {
+        const merged = new Map((current.events || []).map((event) => [Number(event.seq) || 0, event]));
+        for (const event of side.events || []) merged.set(Number(event.seq) || 0, event);
+        current.events = [...merged.values()].sort((a, b) => (Number(a.seq) || 0) - (Number(b.seq) || 0));
+      }
+      return attempts;
+    }
+
+    function loadedProgressCount(task, sideKey) {
+      return historyAttemptsFor(task, sideKey).reduce((total, attempt) => total + (attempt.events || []).length, 0);
+    }
+
+    function renderLogStreamHtml(task, sideKey) {
+      const attempts = historyAttemptsFor(task, sideKey);
+      if (!attempts.length) return `<div class="log-empty">还没有日志记录。</div>`;
+      const blocks = attempts.map((attempt) => {
+        const events = [...(attempt.events || [])].sort((a, b) => (Number(a.seq) || 0) - (Number(b.seq) || 0));
+        const status = attempt.isCurrent ? "当前执行" : `自动重试 #${attempt.attempt || 1}`;
+        const header = `<div class="log-attempt">${esc(status)} · ${esc(fmtClock(attempt.startedAt || attempt.finishedAt))}${attempt.sessionId ? ` · ${esc(attempt.sessionId.slice(0, 8))}` : ""}</div>`;
+        if (!events.length) {
+          return `${header}<div class="log-empty">${state.historyCache.has(`${task.id}:${sideKey}`) ? "该尝试没有事件摘要。" : "正在加载完整日志…"}</div>`;
+        }
+        return header + events.map((event) => `
+          <div class="log-line">
+            <span class="log-seq">#${esc(event.seq ?? "—")}</span>
+            <div>
+              <span class="log-kind ${esc(event.kind)}">${esc(event.kind || "evt")}</span>
+              <div class="log-title">${esc(event.title)}</div>
+              ${event.detail ? `<div class="log-detail">${esc(event.detail)}</div>` : ""}
+            </div>
+          </div>`).join("");
+      }).join("");
+      return blocks + (state.historyCache.has(`${task.id}:${sideKey}`) ? "" : `<div class="log-empty">历史日志加载中…</div>`);
+    }
+
+    function fillLogStreams(taskId, side) {
+      const node = document.querySelector(`[data-log-stream-task="${taskId}"][data-log-stream-side="${side}"]`);
+      if (!node) return;
+      const task = (state.data?.tasks || []).find((item) => item.id === taskId);
+      if (!task) return;
+      const firstFill = node.dataset.initialized !== "true";
+      const atBottom = firstFill || node.scrollHeight - node.scrollTop - node.clientHeight < 36;
+      const scrollTop = node.scrollTop;
+      node.innerHTML = renderLogStreamHtml(task, side);
+      const countNode = node.closest(".log-panel")?.querySelector(".log-head span");
+      if (countNode) {
+        const retryCount = Math.max(0, historyAttemptsFor(task, side).length - 1);
+        countNode.textContent = `当前执行 · ${retryCount} 次自动重试 · ${loadedProgressCount(task, side)} 条已载入`;
+      }
+      node.dataset.initialized = "true";
+      node.scrollTop = atBottom ? node.scrollHeight : scrollTop;
+    }
+
+    async function ensureHistory(taskId, side, force = false) {
+      const key = `${taskId}:${side}`;
+      const cached = state.historyCache.get(key);
+      if (!force && cached && Date.now() - cached.at < 15000) {
+        fillLogStreams(taskId, side);
+        return cached;
+      }
+      try {
+        const params = new URLSearchParams({ taskId, side, limit: "500" });
+        const response = await fetch(`/api/history?${params}`, { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+        const record = { at: Date.now(), attempts: data.attempts || [] };
+        state.historyCache.set(key, record);
+        fillLogStreams(taskId, side);
+        return record;
+      } catch (error) {
+        const node = document.querySelector(`[data-log-stream-task="${taskId}"][data-log-stream-side="${side}"]`);
+        if (node) node.innerHTML = `<div class="log-empty">历史日志加载失败：${esc(error.message)}</div>`;
+        return null;
+      }
+    }
+
+    function renderTodoPanel(task, key, side) {
+      const todos = side?.trace?.todos || [];
+      const completed = todos.filter((item) => item.status === "completed").length;
+      const summary = todos.length ? `${completed}/${todos.length} 完成` : "无记录";
+      const labels = { completed: "完成", in_progress: "进行中", pending: "待办" };
+      const icons = { completed: "✓", in_progress: "●", pending: "○" };
+      const body = todos.length
+        ? `<div class="todo-list">${todos.map((item) => `
+            <div class="todo-item" data-status="${esc(item.status)}">
+              <span class="todo-dot">${icons[item.status] || "○"}</span>
+              <span class="todo-text">${esc(item.status === "in_progress" && item.activeForm ? item.activeForm : item.content)}</span>
+              <span class="todo-status">${labels[item.status] || esc(item.status)}</span>
+            </div>`).join("")}</div>`
+        : `<div class="todo-empty">本会话没有产生 TodoWrite 记录。</div>`;
+      return `<details class="todo-panel" data-persist="todo:${esc(task.id)}:${esc(key)}">
+        <summary>TodoWrite <span class="utility-summary">${esc(summary)}</span></summary>
+        ${body}
+      </details>`;
+    }
+
+    function renderCandidateLogHtml(task, candidate) {
+      const attempts = historyAttemptsFor(task, candidate.candidateId);
+      const currentEvents = Array.isArray(candidate.events) ? candidate.events : [];
+      if (!attempts.length && !currentEvents.length) return `<div class="log-empty">还没有日志记录。</div>`;
+      const blocks = attempts.length ? attempts.map((attempt) => {
+        const isCurrent = Boolean(attempt.isCurrent);
+        const events = attempt.events || [];
+        const header = `<div class="log-attempt">${isCurrent ? "当前执行" : `历史尝试 #${esc(attempt.attempt || 1)}`} · ${esc(fmtClock(attempt.startedAt || attempt.finishedAt))}${attempt.sessionId ? ` · ${esc(String(attempt.sessionId).slice(0, 8))}` : ""}</div>`;
+        if (!events.length) return `${header}<div class="log-empty">${isCurrent ? "等待事件摘要…" : "无事件摘要"}</div>`;
+        return header + events.map((event) => `
+          <div class="log-line">
+            <span class="log-seq">#${esc(event.seq ?? "—")}</span>
+            <div>
+              <span class="log-kind ${esc(event.kind)}">${esc(event.kind || "evt")}</span>
+              <div class="log-title">${esc(event.title)}</div>
+              ${event.detail ? `<div class="log-detail">${esc(event.detail)}</div>` : ""}
+            </div>
+          </div>`).join("");
+      }).join("") : currentEvents.map((event) => `
+          <div class="log-line">
+            <span class="log-seq">#${esc(event.seq ?? "—")}</span>
+            <div>
+              <span class="log-kind ${esc(event.kind)}">${esc(event.kind || "evt")}</span>
+              <div class="log-title">${esc(event.title)}</div>
+              ${event.detail ? `<div class="log-detail">${esc(event.detail)}</div>` : ""}
+            </div>
+          </div>`).join("");
+      return blocks;
+    }
+
+    function renderCandidateRace(task) {
+      const items = task.candidates || [];
+      if (!items.length) return "";
+      const winners = (task.candidateMapping?.A?.candidateId ? 1 : 0) + (task.candidateMapping?.B?.candidateId ? 1 : 0);
+      const cards = items.map((item) => {
+        const trace = item.trace || {};
+        const container = item.container || {};
+        const mapped = item.mappedSide ? `→ ${item.mappedSide}` : (item.completionOrder ? `第 ${item.completionOrder} 名` : "");
+        const last = trace.lastError || trace.lastSummary || trace.lastText || trace.lastTool || item.phaseDetail || "等待首个事件";
+        const health = item.health || "idle";
+        const candidateStatus = String(item.status || "idle").toLowerCase();
+        const candidateHeading = candidateStatus === "cancelled" ? statusLabel(candidateStatus) : (HEALTH_LABELS[health] || statusLabel(candidateStatus));
+        const candidateLabel = item.mappedSide || String(item.candidateId || "").replace(/^candidate-/, "");
+        return `<article class="candidate-card" data-health="${esc(health)}">
+          <header class="side-head">
+            <div class="side-title">
+              <span class="side-letter">${esc(candidateLabel)}</span>
+              <div>
+                <h3 class="side-name">${esc(candidateHeading)}</h3>
+                <div class="side-phase" title="${esc(item.phaseDetail || "")}">${esc(item.phaseDetail || "等待状态")}</div>
+              </div>
+            </div>
+            <span class="chip ${sideClass(item)}">${esc(statusLabel(item.status))}</span>
+          </header>
+          <div class="side-metrics">
+            <span>${esc(item.candidateId)}${mapped ? ` · ${esc(mapped)}` : ""}</span>
+            <span>尝试 <strong>${esc(item.attempt || "—")}</strong></span>
+            <span>工具 <strong>${esc(trace.toolCalls ?? 0)}</strong></span>
+            <span>静默 <strong>${esc(item.silentSeconds === null || item.silentSeconds === undefined ? "—" : fmtDuration(item.silentSeconds))}</strong></span>
+          </div>
+          <div class="meta-block">
+            <div><strong>容器</strong> ${esc(container.name || "无容器")}</div>
+            <div><strong>Session</strong> ${esc(item.sessionId || "—")}</div>
+            <div><strong>最近输出</strong> ${esc(last)}</div>
+          </div>
+          <div class="log-panel">
+            <div class="log-head">
+              <div><strong>最近进展</strong><span>当前执行 · ${Math.max(0, historyAttemptsFor(task, item.candidateId).length - 1)} 次自动重试 · ${loadedProgressCount(task, item.candidateId)} 条已载入</span></div>
+              <button class="btn ghost log-bottom" type="button" data-command="log-bottom" data-task-id="${esc(task.id)}" data-side="${esc(item.candidateId)}">最新</button>
+            </div>
+            <div class="log-stream" data-log-stream-task="${esc(task.id)}" data-log-stream-side="${esc(item.candidateId)}" data-scroll-key="log-stream:${esc(task.id)}:${esc(item.candidateId)}">${renderCandidateLogHtml(task, item)}</div>
+          </div>
+        </article>`;
+      }).join("");
+      return `<section class="candidate-race">
+        <div class="candidate-race-head">
+          <h3>候选竞速</h3>
+          <span>${items.length} 个候选 · ${winners}/2 已映射 A/B · 最先完成的两个保留，其余主动停止</span>
+        </div>
+        <div class="candidate-grid">${cards}</div>
+      </section>`;
+    }
+
+    function renderSide(task, key) {
+      const side = (task.sides || {})[key] || {};
+      const trace = side.trace || {};
+      const container = side.container || {};
+      const health = side.health || "idle";
+      const history = side.history || [];
+      const stages = (side.stages || []).map((stage) => `
+        <div class="stage-cell ${esc(stage.state)}"><div class="stage-bar"></div><span>${esc(stage.label)}</span></div>
+      `).join("");
+      const canResume = Boolean(side.canResume) && !side.active;
+      return `
+        <section class="side-panel" data-side="${key}" data-health="${esc(health)}">
+          <header class="side-head">
+            <div class="side-title">
+              <span class="side-letter">${key}</span>
+              <div>
+                <h3 class="side-name">${esc(HEALTH_LABELS[health] || statusLabel(side.status))}</h3>
+                <div class="side-phase" title="${esc(side.phaseDetail || "")}">${esc(side.phaseDetail || "等待状态")}</div>
+              </div>
+            </div>
+            <span class="chip ${sideClass(side)}">${esc(statusLabel(side.status))}</span>
+          </header>
+          <div class="side-metrics">
+            <span>尝试 <strong>${esc(side.attempt || "—")}</strong></span>
+            <span>工具 <strong>${esc(trace.toolCalls ?? 0)}</strong></span>
+            <span>事件 <strong>${esc(trace.eventCount ?? 0)}</strong></span>
+            <span>静默 <strong>${esc(side.silentSeconds === null || side.silentSeconds === undefined ? "—" : fmtDuration(side.silentSeconds))}</strong></span>
+          </div>
+          <div class="stage-row" aria-label="${key} 侧阶段">${stages}</div>
+          ${renderTodoPanel(task, key, side)}
+          <div class="log-panel">
+            <div class="log-head">
+              <div><strong>最近进展</strong><span>当前执行 · ${Math.max(0, historyAttemptsFor(task, key).length - 1)} 次自动重试 · ${loadedProgressCount(task, key)} 条已载入</span></div>
+              <button class="btn ghost log-bottom" type="button" data-command="log-bottom" data-task-id="${esc(task.id)}" data-side="${key}">最新</button>
+            </div>
+            <div class="log-stream" data-log-stream-task="${esc(task.id)}" data-log-stream-side="${esc(key)}" data-scroll-key="log-stream:${esc(task.id)}:${esc(key)}">${renderLogStreamHtml(task, key)}</div>
+          </div>
+          <div class="meta-block">
+            <div><strong>容器</strong> ${esc(container.name || "无容器")}</div>
+            <div><strong>状态</strong> ${esc(container.status || "not found")}</div>
+            <div><strong>Session</strong> ${esc(side.sessionId || "—")}</div>
+            <div><strong>候选</strong> ${esc(side.candidateId || "未映射")}${side.mappedSide ? ` → ${esc(side.mappedSide)}` : ""}</div>
+          </div>
+          <div class="side-actions">
+            <button class="btn" type="button" data-command="run" data-mode="resume" data-task-id="${esc(task.id)}" data-side="${key}" ${canResume ? "" : "disabled"}>续跑 ${key}</button>
+          </div>
+        </section>`;
+    }
+
+    function renderSubmissions() {
+      const data = state.data?.submissions || {};
+      const items = data.items || [];
+      const stats = data.stats || {};
+      const total = Number(stats.effective_total ?? stats.total ?? items.length);
+      const pending = Number(stats.pending_fix ?? 0);
+      const passRate = stats.pass_rate === null || stats.pass_rate === undefined ? "—" : `${Number(stats.pass_rate)}%`;
+      $("#submissionSummary").textContent = `平台 ${total} · 待返修 ${pending} · 通过率 ${passRate}`;
+      const error = data.error ? `<div class="rail-error">提交信息暂不可用：${esc(data.error)}</div>` : "";
+      const rows = items.slice(0, 12).map((item) => {
+        const matched = (item.taskIds || []).includes(state.selectedId);
+        const rawStatus = item.statusLabel || item.stageLabel || item.status || item.stage || "未知";
+        return `<article class="sub-item ${matched ? "matched" : ""}">
+          <div>
+            <div class="sub-title">${esc(item.type || "提交")} · R${esc(item.round ?? "—")}</div>
+            <div class="sub-line" title="${esc(item.repo || "")}">${esc(item.repo || item.sessionId || "—")}</div>
+          </div>
+          <div class="sub-side">
+            <span class="sub-status ${subStatusClass(rawStatus)}">${esc(rawStatus)}</span>
+            <span class="sub-time">${esc(fmtClock(item.at || item.submittedAt))}</span>
+          </div>
+        </article>`;
+      }).join("");
+      $("#submissionContent").innerHTML = `${error}<div class="sub-stats"><span><strong>${total}</strong> 平台提交</span><span><strong>${pending}</strong> 待返修</span><span><strong>${passRate}</strong> 通过率</span></div>${rows ? `<div class="sub-list">${rows}</div>` : (error ? "" : `<div class="index-empty">暂无提交记录。</div>`)}`;
+    }
+
+    function renderSync() {
+      const node = $("#syncState");
+      node.classList.toggle("error", Boolean(state.lastError));
+      if (state.lastError) {
+        node.textContent = "同步异常";
+        node.title = state.lastError;
+      } else {
+        node.textContent = state.data?.generatedAt ? `${fmtClock(state.data.generatedAt)} 同步` : "连接中";
+        node.title = "";
+      }
+    }
+
+    function captureViewState() {
+      if (!document.querySelector(".task-detail")) return null;
+      return {
+        scrollY: window.scrollY,
+        open: [...document.querySelectorAll("details[data-persist][open]")].map((item) => item.dataset.persist),
+        scroll: [...document.querySelectorAll("[data-scroll-key]")].map((item) => [
+          item.dataset.scrollKey,
+          item.scrollTop,
+          item.classList.contains("log-stream") && item.scrollHeight - item.scrollTop - item.clientHeight < 36,
+        ]),
+      };
+    }
+
+    function restoreViewState(view) {
+      document.querySelectorAll("details[data-persist]").forEach((item) => {
+        item.open = view.open.includes(item.dataset.persist);
+      });
+      requestAnimationFrame(() => {
+        const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+        window.scrollTo(0, Math.min(view.scrollY || 0, maxScroll));
+        const restoredKeys = new Set(view.scroll.map(([key]) => key));
+        view.scroll.forEach(([key, value, atBottom]) => {
+          const item = document.querySelector(`[data-scroll-key="${key}"]`);
+          if (!item) return;
+          item.scrollTop = atBottom ? item.scrollHeight : (Number(value) || 0);
+          item.dataset.initialized = "true";
+        });
+        document.querySelectorAll(".log-stream").forEach((item) => {
+          if (!restoredKeys.has(item.dataset.scrollKey)) item.scrollTop = item.scrollHeight;
+          item.dataset.initialized = "true";
+        });
+      });
+    }
+
+    function renderAutomation() {
+      const panel = $("#automationPanel");
+      const automation = state.data?.automation;
+      if (!panel || !automation) return;
+      panel.hidden = !state.automationOpen;
+      $("#queueBadge").textContent = `${automation.counts?.running || 0}/${automation.capacity || 2}`;
+      $("#rootCount").textContent = `${(automation.roots || []).length} 个`;
+      $("#queueCount").textContent = `${automation.counts?.pending || 0} 待执行`;
+      const roots = automation.roots || [];
+      $("#rootList").innerHTML = roots.map((root) => `
+        <div class="root-item">
+          <span class="root-path" title="${esc(root)}">${esc(root)}</span>
+          <button class="root-remove" type="button" data-root-remove="${esc(root)}" ${roots.length <= 1 ? "disabled" : ""}>移除</button>
+        </div>`).join("") || `<div class="index-empty">未设置监控目录。</div>`;
+      const labels = { pending: "待执行", running: "执行中", done: "已完成", failed: "失败", skipped: "已跳过" };
+      const items = automation.items || [];
+      $("#queueList").innerHTML = items.length ? items.map((item, index) => `
+        <div class="queue-item" data-status="${esc(item.status)}">
+          <div>
+            <div class="queue-name" title="${esc(item.taskName)}">${index + 1}. ${esc(item.taskName)}</div>
+            <div class="queue-sub">${esc(String(item.side || "both").toUpperCase())} · ${esc(labels[item.status] || item.status)}${item.error ? ` · ${esc(item.error)}` : ""}</div>
+          </div>
+          <div class="queue-buttons">
+            <button type="button" data-q-action="move-up" data-item-id="${esc(item.id)}" ${index === 0 || item.status === "running" ? "disabled" : ""}>↑</button>
+            <button type="button" data-q-action="move-down" data-item-id="${esc(item.id)}" ${index === items.length - 1 || item.status === "running" ? "disabled" : ""}>↓</button>
+            ${item.status === "failed" || item.status === "skipped" ? `<button type="button" data-q-action="retry" data-item-id="${esc(item.id)}">重试</button>` : ""}
+            <button type="button" data-q-action="remove" data-item-id="${esc(item.id)}" ${item.status === "running" ? "disabled" : ""}>删除</button>
+          </div>
+        </div>`).join("") : `<div class="index-empty">队列为空。先选择左侧任务，再添加到队列。</div>`;
+      const capacity = $("#capacityInput");
+      if (document.activeElement !== capacity) capacity.value = String(automation.capacity || 2);
+      const counts = automation.counts || {};
+      $("#queueStats").innerHTML = `
+        <div class="queue-stat"><b>${counts.jobsRunning || 0}</b><span>当前任务</span></div>
+        <div class="queue-stat"><b>${automation.capacity || 2}</b><span>并发上限</span></div>
+        <div class="queue-stat"><b>${counts.done || 0}</b><span>已完成</span></div>
+        <div class="queue-stat"><b>${counts.failed || 0}</b><span>失败</span></div>`;
+      $("#queueToggleBtn").textContent = automation.paused ? "启动队列" : "暂停队列";
+      $("#queueToggleBtn").classList.toggle("primary", Boolean(automation.paused));
+    }
+
+    async function automationApi(action, payload = {}) {
+      try {
+        const response = await fetch("/api/automation", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action, ...payload }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
+        state.data.automation = data.automation;
+        renderAutomation();
+        if (action === "set-roots") await load(false);
+      } catch (error) {
+        showToast(`队列操作失败：${error.message}`, true);
+      }
+    }
+
+    function render() {
+      const view = captureViewState();
+      renderTop();
+      renderTaskList();
+      renderDetail();
+      renderSubmissions();
+      renderAutomation();
+      renderSync();
+      if (view) restoreViewState(view);
+    }
+
+    const HIDDEN_TASKS_KEY = "sologsb-monitor-hidden-tasks-v1";
+
+    function loadHiddenTaskIds() {
+      try {
+        const value = JSON.parse(localStorage.getItem(HIDDEN_TASKS_KEY) || "[]");
+        return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function saveHiddenTaskIds() {
+      localStorage.setItem(HIDDEN_TASKS_KEY, JSON.stringify([...state.hiddenTaskIds]));
+    }
+
+    function isTaskHidden(taskId) {
+      return state.hiddenTaskIds.has(taskId);
+    }
+
+    function renderHiddenToggle() {
+      const count = state.hiddenTaskIds.size;
+      const node = $("#hiddenToggle");
+      if (!node) return;
+      node.hidden = count === 0;
+      node.classList.toggle("visible", count > 0);
+      node.classList.toggle("active", state.showHidden);
+      node.setAttribute("aria-pressed", String(state.showHidden));
+      node.textContent = state.showHidden ? `返回正常列表 · ${count} 个已屏蔽` : `管理已屏蔽 · ${count} 个`;
+    }
+
+    function hideTask(taskId) {
+      state.hiddenTaskIds.add(taskId);
+      saveHiddenTaskIds();
+      if (!state.showHidden && state.selectedId === taskId) {
+        const selectable = (state.data?.tasks || []).filter((task) => !isTaskHidden(task.id));
+        state.selectedId = fallbackTaskId(selectable);
+        persistSelectedTask(state.selectedId);
+      }
+      render();
+    }
+
+    function restoreTask(taskId) {
+      state.hiddenTaskIds.delete(taskId);
+      saveHiddenTaskIds();
+      render();
+    }
+
+    const SELECTED_TASK_KEY = "sologsb-monitor-selected-task-v1";
+
+    function selectedTaskFromStorage() {
+      const fromUrl = new URLSearchParams(window.location.search).get("task") || "";
+      return fromUrl || localStorage.getItem(SELECTED_TASK_KEY) || "";
+    }
+
+    function persistSelectedTask(taskId) {
+      if (taskId) localStorage.setItem(SELECTED_TASK_KEY, taskId);
+      else localStorage.removeItem(SELECTED_TASK_KEY);
+      const url = new URL(window.location.href);
+      if (taskId) url.searchParams.set("task", taskId);
+      else url.searchParams.delete("task");
+      if (window.location.search !== url.search) {
+        window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      }
+    }
+
+    function fallbackTaskId(tasks) {
+      return tasks.find((task) => task.needsAttention)?.id
+        || tasks.find((task) => Object.values(task.sides || {}).some((side) => side.active))?.id
+        || tasks[0]?.id
+        || null;
+    }
+
+    async function load(forceSubmissions = false) {
+      if (state.loading) return;
+      state.loading = true;
+      try {
+        const params = new URLSearchParams({ submissions: "1" });
+        if (forceSubmissions) params.set("refresh", "1");
+        const response = await fetch(`/api/snapshot?${params}`, { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+        state.data = data;
+        state.lastError = "";
+        state.errorCount = 0;
+        const tasks = data.tasks || [];
+        const selectableTasks = tasks.filter((task) => state.showHidden || !isTaskHidden(task.id));
+        if (!state.selectedId) state.selectedId = selectedTaskFromStorage();
+        if (!state.selectedId || !selectableTasks.some((task) => task.id === state.selectedId)) {
+          state.selectedId = fallbackTaskId(selectableTasks);
+        }
+        persistSelectedTask(state.selectedId);
+        render();
+        const selected = tasks.find((task) => task.id === state.selectedId);
+        if (selected) {
+          ensureHistory(selected.id, "A");
+          ensureHistory(selected.id, "B");
+          for (const candidate of selected.candidates || []) ensureHistory(selected.id, candidate.candidateId);
+        }
+      } catch (error) {
+        state.errorCount += 1;
+        state.lastError = error.message || String(error);
+        renderSync();
+        if (state.errorCount === 1 || state.errorCount % 10 === 0) showToast(`刷新失败：${state.lastError}`, true);
+      } finally {
+        state.loading = false;
+        schedule();
+      }
+    }
+
+    function schedule() {
+      clearTimeout(state.timer);
+      const base = Math.max(1.5, Number(state.data?.config?.pollSeconds || 3));
+      const delay = document.hidden ? Math.max(base, 10) : base;
+      state.timer = setTimeout(() => load(false), delay * 1000);
+    }
+
+    async function sendAction(taskId, side, mode) {
+      try {
+        const response = await fetch("/api/action", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ taskId, side, mode }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
+        showToast(`已启动 ${side} / ${mode}，PID ${data.job?.pid || "—"}`);
+        await load(false);
+      } catch (error) {
+        showToast(`操作失败：${error.message}`, true);
+      }
+    }
+
+    async function copyText(value) {
+      try {
+        await navigator.clipboard.writeText(value);
+        showToast("路径已复制");
+      } catch {
+        const textarea = document.createElement("textarea");
+        textarea.value = value;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        textarea.remove();
+        showToast("路径已复制");
+      }
+    }
+
+    async function loadLog(details) {
+      const taskId = details.dataset.logTask;
+      const side = details.dataset.logSide;
+      const kind = details.dataset.logKind;
+      const key = `${taskId}:${side}:${kind}`;
+      const pre = details.querySelector("pre");
+      if (state.logCache.has(key)) {
+        pre.textContent = state.logCache.get(key);
+        return;
+      }
+      pre.textContent = "加载中…";
+      try {
+        const params = new URLSearchParams({ taskId, side, kind, lines: "220" });
+        const response = await fetch(`/api/log?${params}`, { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+        const text = (data.lines || []).length ? data.lines.join("\n") : "暂无日志。";
+        state.logCache.set(key, text);
+        pre.textContent = text;
+      } catch (error) {
+        pre.textContent = `加载失败：${error.message}`;
+      }
+    }
+
+    function bindEvents() {
+      document.addEventListener("click", async (event) => {
+        const command = event.target.closest("[data-command]");
+        if (!command) return;
+        const name = command.dataset.command;
+        if (name === "select-task") {
+          state.selectedId = command.dataset.taskId;
+          persistSelectedTask(state.selectedId);
+          render();
+          return;
+        }
+        if (name === "hide-task") {
+          hideTask(command.dataset.taskId);
+          return;
+        }
+        if (name === "restore-task") {
+          restoreTask(command.dataset.taskId);
+          return;
+        }
+        if (name === "refresh") return void await load(true);
+        if (name === "log-bottom") {
+          const node = document.querySelector(`[data-log-stream-task="${command.dataset.taskId}"][data-log-stream-side="${command.dataset.side}"]`);
+          if (node) node.scrollTop = node.scrollHeight;
+          return;
+        }
+        if (name === "run") return void await sendAction(command.dataset.taskId, command.dataset.side, command.dataset.mode || "resume");
+        if (name === "run-both") return void await sendAction(command.dataset.taskId, "BOTH", "both");
+        if (name === "copy-path") await copyText(command.dataset.copy || "");
+      });
+
+      document.addEventListener("toggle", (event) => {
+        const details = event.target;
+        if (!(details instanceof HTMLDetailsElement) || !details.open) return;
+        if (details.dataset.logTask) loadLog(details);
+        if (details.dataset.historyTask) ensureHistory(details.dataset.historyTask, details.dataset.historySide);
+      }, true);
+
+      $("#searchInput").addEventListener("input", (event) => {
+        state.query = event.target.value;
+        renderTaskList();
+      });
+      $("#filterRow").addEventListener("click", (event) => {
+        const button = event.target.closest("[data-filter]");
+        if (!button) return;
+        state.filter = button.dataset.filter;
+        [...$("#filterRow").children].forEach((item) => item.classList.toggle("active", item === button));
+        renderTaskList();
+      });
+      $("#hiddenToggle").addEventListener("click", () => {
+        state.showHidden = !state.showHidden;
+        render();
+      });
+      $("#refreshBtn").addEventListener("click", () => load(true));
+      $("#themeBtn").addEventListener("click", () => {
+        const root = document.documentElement;
+        const current = root.dataset.theme || "dark";
+        const next = current === "dark" ? "light" : "dark";
+        root.dataset.theme = next;
+        localStorage.setItem("sologsb-monitor-theme-v2", next);
+      });
+      document.addEventListener("visibilitychange", schedule);
+    }
+
+    function initTheme() {
+      const saved = localStorage.getItem("sologsb-monitor-theme-v2");
+      document.documentElement.dataset.theme = saved || "dark";
+    }
+
+    initTheme();
+    bindEvents();
+    state.hiddenTaskIds = new Set(loadHiddenTaskIds());
+    state.automationOpen = localStorage.getItem("sologsb-monitor-automation-open") === "1";
+    load(false);
+  </script>
+</body>
+</html>

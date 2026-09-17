@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>自动化任务管理</title>
+  <style>
+    @font-face { font-family: "Manager Sans"; src: url("/static/fonts/manrope-latin-wght-normal.woff2") format("woff2"); font-weight: 200 800; font-display: swap; }
+    @font-face { font-family: "Manager Mono"; src: url("/static/fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2"); font-weight: 100 800; font-display: swap; }
+    :root {
+      --bg:#1d2328; --panel:#252c31; --panel-soft:#2c3439; --text:#e8ece7; --muted:#aab3b0; --faint:#7f8986;
+      --line:#394349; --line-strong:#536067; --a:#d09a50; --b:#65a9b6; --ok:#6fb58a; --warn:#d0a154; --bad:#d2776e;
+      --sans:"Manager Sans","PingFang SC","Microsoft YaHei",sans-serif; --mono:"Manager Mono","SFMono-Regular",Consolas,monospace;
+    }
+    html[data-theme="light"] { --bg:#f6f5f0; --panel:#fffefa; --panel-soft:#f0f1ed; --text:#202a33; --muted:#6f7a83; --faint:#929ba2; --line:#d9ddd9; --line-strong:#bdc5c0; --a:#a76a13; --b:#247487; --ok:#2f7b55; --warn:#a66c15; --bad:#b2473f; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; color:var(--text); background:var(--bg); font:13px/1.5 var(--sans); -webkit-font-smoothing:antialiased; }
+    button,input,select { font:inherit; color:inherit; }
+    button { cursor:pointer; }
+    button:focus-visible,input:focus-visible,select:focus-visible { outline:2px solid #78a9dd; outline-offset:2px; }
+    .topbar { position:sticky; top:0; z-index:20; display:grid; grid-template-columns:1fr auto 1fr; gap:18px; align-items:center; min-height:64px; padding:10px clamp(16px,3vw,34px); border-bottom:1px solid var(--line); background:color-mix(in srgb,var(--bg) 94%,transparent); backdrop-filter:blur(10px); }
+    .brand { display:flex; align-items:center; gap:10px; }
+    .mark { display:grid; grid-template-columns:repeat(2,12px); gap:2px; width:26px; height:26px; }
+    .mark span { border:1px solid var(--line-strong); background:var(--panel); }
+    .mark span:first-child { border-color:var(--a); background:color-mix(in srgb,var(--a) 18%,var(--panel)); }
+    .mark span:last-child { border-color:var(--b); background:color-mix(in srgb,var(--b) 18%,var(--panel)); }
+    .eyebrow { margin:0; color:var(--faint); font:600 9px/1.2 var(--mono); letter-spacing:.12em; text-transform:uppercase; }
+    h1 { margin:2px 0 0; font-size:17px; letter-spacing:-.02em; }
+    .summary { color:var(--muted); font-size:12px; white-space:nowrap; }
+    .summary strong { color:var(--text); font:700 13px/1 var(--mono); }
+    .actions { display:flex; justify-content:flex-end; gap:7px; }
+    .btn { min-height:32px; padding:6px 10px; border:1px solid var(--line-strong); border-radius:3px; background:var(--panel); color:var(--text); font-size:11px; font-weight:650; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; }
+    .btn:hover { background:var(--panel-soft); }
+    .btn:disabled { opacity:.4; cursor:not-allowed; }
+    .btn.primary { border-color:var(--text); background:var(--text); color:var(--bg); }
+    .btn.danger { color:var(--bad); border-color:color-mix(in srgb,var(--bad) 50%,var(--line)); }
+    .btn.ghost { border-color:transparent; background:transparent; color:var(--muted); }
+    .btn.ghost:hover { border-color:var(--line); color:var(--text); }
+    .platform-picker {
+      display:grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(320px, .8fr) auto;
+      gap:14px;
+      align-items:center;
+      padding:12px clamp(16px,3vw,34px);
+      border-bottom:1px solid var(--line);
+      background:color-mix(in srgb,var(--panel) 84%,var(--bg));
+    }
+    .platform-controls { display:flex; gap:6px; min-width:0; }
+    .platform-controls select { width:auto; min-width:110px; }
+    .combo { position:relative; min-width:220px; flex:1; }
+    .combo .input { width:100%; }
+    .platform-options {
+      position:absolute; z-index:30; top:calc(100% + 4px); left:0; right:0;
+      max-height:260px; overflow:auto; display:none; padding:4px;
+      border:1px solid var(--line-strong); border-radius:3px; background:var(--panel); box-shadow:0 12px 30px rgba(0,0,0,.28);
+    }
+    .platform-options.open { display:block; }
+    .platform-option { padding:7px 8px; border-radius:2px; cursor:pointer; }
+    .platform-option:hover { background:var(--panel-soft); }
+    .platform-option b { font:650 10px/1.3 var(--mono); }
+    .platform-option span { display:block; margin-top:3px; color:var(--faint); font:500 8px/1.4 var(--mono); }
+    .platform-selected { min-width:0; color:var(--muted); font-size:10px; }
+    .platform-selected b { color:var(--text); font:650 11px/1.3 var(--mono); }
+    .platform-selected span { display:block; margin-top:3px; color:var(--faint); font:500 8px/1.4 var(--mono); }
+    .platform-actions { display:flex; gap:6px; justify-content:flex-end; }
+    .platform-error { color:var(--bad); font-size:10px; }
+    .template-panel { border-bottom:1px solid var(--line); background:color-mix(in srgb,var(--panel) 72%,var(--bg)); }
+    .template-panel > summary { padding:10px clamp(16px,3vw,34px); color:var(--muted); cursor:pointer; font:600 10px/1.4 var(--mono); }
+    .template-panel > summary span { margin-left:8px; color:var(--faint); font-weight:500; }
+    .template-body { display:grid; gap:8px; padding:0 clamp(16px,3vw,34px) 14px; }
+    .template-body textarea { width:100%; min-height:220px; resize:vertical; padding:10px; border:1px solid var(--line); border-radius:3px; background:var(--panel); color:var(--text); font:500 10px/1.55 var(--mono); }
+    .template-actions { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+    .template-actions span { color:var(--faint); font:500 9px/1.4 var(--mono); }
+    .layout { display:grid; grid-template-columns:270px 370px minmax(420px,1fr); gap:0; min-height:calc(100vh - 64px); }    .column { min-width:0; padding:22px; border-right:1px solid var(--line); }
+    .column:last-child { border-right:0; }
+    .column-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; }
+    .column-head h2 { margin:0; font-size:14px; }
+    .column-head span { color:var(--faint); font:550 9px/1.3 var(--mono); }
+    .input, select { width:100%; min-height:34px; padding:7px 9px; border:1px solid var(--line); border-radius:3px; background:var(--panel); color:var(--text); font:500 10px/1.3 var(--mono); }
+    .row { display:flex; gap:6px; }
+    .row .input { flex:1; min-width:0; }
+    .list { display:grid; gap:6px; }
+    .card { padding:10px; border:1px solid var(--line); border-radius:3px; background:var(--panel); }
+    .root { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center; }
+    .path { color:var(--muted); font:500 9px/1.45 var(--mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .task { display:grid; grid-template-columns:minmax(0,1fr) 78px auto; gap:8px; align-items:center; }
+    .task-name { min-width:0; font-size:11px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .meta { margin-top:3px; color:var(--faint); font:500 8px/1.4 var(--mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .status { color:var(--faint); font:550 8px/1.3 var(--mono); }
+    .status.running { color:var(--ok); }
+    .status.failed { color:var(--bad); }
+    .queue-item { display:grid; grid-template-columns:30px minmax(0,1fr) auto; gap:8px; align-items:center; }
+    .idx { color:var(--faint); font:600 10px/1 var(--mono); text-align:center; }
+    .queue-name { font-size:11px; font-weight:700; }
+    .sub { margin-top:3px; color:var(--faint); font:500 8px/1.4 var(--mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .qbtns { display:flex; gap:3px; }
+    .qbtns button { min-height:24px; padding:3px 6px; border:1px solid var(--line); border-radius:2px; background:transparent; color:var(--faint); font:550 9px/1 var(--mono); }
+    .qbtns button:hover { color:var(--text); background:var(--panel-soft); }
+    .queue-actions { display:flex; gap:6px; margin:12px 0; }
+    .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-top:12px; }
+    .stat { padding:9px; border:1px solid var(--line); background:var(--panel); }
+    .stat b { display:block; font:700 17px/1 var(--mono); }
+    .stat span { display:block; margin-top:4px; color:var(--faint); font-size:8px; }
+    .empty { padding:16px 4px; color:var(--faint); font-size:10px; }
+    .notice { padding:9px 10px; border:1px solid color-mix(in srgb,var(--warn) 45%,var(--line)); background:color-mix(in srgb,var(--warn) 6%,var(--panel)); color:var(--muted); font-size:10px; }
+    .toast { position:fixed; right:18px; bottom:18px; z-index:50; max-width:420px; padding:10px 12px; border:1px solid var(--line-strong); background:var(--text); color:var(--bg); opacity:0; transform:translateY(8px); transition:.18s ease; pointer-events:none; font-size:11px; }
+    .toast.show { opacity:1; transform:none; }
+    .toast.error { background:var(--bad); color:#fff; }
+    @media (max-width:1050px) { .platform-picker { grid-template-columns:1fr; } .layout { grid-template-columns:1fr 1fr; } .column:nth-child(3) { grid-column:1/-1; border-top:1px solid var(--line); } }
+    @media (max-width:720px) { .topbar { grid-template-columns:1fr auto; padding:10px 14px; } .summary { grid-column:1/-1; order:3; } .layout { display:block; } .column { border-right:0; border-bottom:1px solid var(--line); padding:16px; } }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><div class="mark"><span></span><span></span><span></span><span></span></div><div><p class="eyebrow">sologsb-0917 / automation</p><h1>自动化任务管理</h1></div></div>
+    <div class="summary" id="summary">正在读取队列…</div>
+    <div class="actions"><a class="btn ghost" href="/">监控页</a><button class="btn" id="refreshBtn" type="button">刷新</button></div>
+  </header>
+  <section class="platform-picker">
+    <div class="platform-controls">
+      <select id="platformTaskType">
+        <option>0-1代码生成</option><option>Bug修复</option><option>feature迭代</option><option>代码重构</option><option>工程化</option><option>代码测试</option>
+      </select>
+      <select id="platformDifficulty"><option>困难</option><option>地狱</option></select>
+      <div class="combo">
+        <input class="input" id="platformSearch" placeholder="搜索 Solo Manager 项目编号 / 名称" autocomplete="off">
+        <div class="platform-options" id="platformOptions"></div>
+      </div>
+    </div>
+    <div class="platform-selected" id="platformSelected"><b>未选择项目</b><span>从可运行项目中搜索，或点击随机选择。</span></div>
+    <div class="platform-actions"><button class="btn" id="randomProjectBtn" type="button">随机选择</button><button class="btn primary" id="addPlatformBtn" type="button">加入队列</button></div>
+  </section>
+  <details class="template-panel" id="templatePanel">
+    <summary>自动触发 Prompt 模板 <span id="templateCount"></span></summary>
+    <div class="template-body">
+      <textarea id="promptTemplatePreview" readonly spellcheck="false"></textarea>
+      <div class="template-actions">
+        <button class="btn" id="copyTemplateBtn" type="button">复制模板</button>
+        <button class="btn" id="copySelectedPromptBtn" type="button">复制已选项目 Prompt</button>
+        <span>平台任务入队时会保存已渲染 Prompt 快照</span>
+      </div>
+    </div>
+  </details>
+  <main class="layout">
+    <section class="column">
+      <div class="column-head"><h2>监控目录</h2><span id="rootCount">0 个</span></div>
+      <div class="list" id="rootList"></div>
+      <div class="row" style="margin-top:10px"><input class="input" id="rootInput" placeholder="/path/to/task-root"><button class="btn" id="addRootBtn" type="button">添加</button></div>
+      <div class="notice" style="margin-top:12px">这里只扫描目录，不会直接启动任务。</div>
+    </section>
+    <section class="column">
+      <div class="column-head"><h2>可选任务</h2><span id="taskCount">0 个</span></div>
+      <input class="input" id="searchInput" type="search" placeholder="搜索任务 / 项目">
+      <div class="list" id="taskList" style="margin-top:10px"></div>
+    </section>
+    <section class="column">
+      <div class="column-head"><h2>执行队列</h2><span id="queueCount">0 待执行</span></div>
+      <div class="queue-actions"><button class="btn primary" id="queueToggleBtn" type="button">启动队列</button><button class="btn ghost" id="queueClearBtn" type="button">清理结束项</button></div>
+      <div class="list" id="queueList"></div>
+      <div class="column-head" style="margin-top:18px"><h2>并发控制</h2><span>任务数</span></div>
+      <div class="row"><input class="input" id="capacityInput" type="number" min="1" max="20" value="2"><button class="btn" id="saveCapacityBtn" type="button">应用</button></div>
+      <div class="stats" id="stats"></div>
+    </section>
+  </main>
+  <div class="toast" id="toast"></div>
+  <script>
+    const state = { data:null, query:"", platformItems:[], platformSelected:null, platformLoading:false, loading:false, timer:null };
+    const $ = (s) => document.querySelector(s);
+    const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    const statusText = { pending:"待执行", running:"执行中", done:"已完成", failed:"失败", skipped:"已跳过" };
+    function toast(message, error=false) { const n=$("#toast"); n.textContent=message; n.className=`toast show${error?" error":""}`; clearTimeout(n._t); n._t=setTimeout(()=>n.className="toast",3000); }
+    async function load() {
+      if (state.loading) return;
+      state.loading=true;
+      try {
+        const r=await fetch("/api/snapshot?submissions=0",{cache:"no-store"});
+        const d=await r.json();
+        if(!r.ok||d.error) throw new Error(d.error||`HTTP ${r.status}`);
+        state.data=d; render();
+      } catch(e) { toast(`刷新失败：${e.message}`,true); }
+      finally { state.loading=false; schedule(); }
+    }
+    function schedule(){ clearTimeout(state.timer); state.timer=setTimeout(load,3000); }
+    async function api(action,payload={}) {
+      try {
+        const r=await fetch("/api/automation",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,...payload})});
+        const d=await r.json();
+        if(!r.ok||!d.ok) throw new Error(d.error||`HTTP ${r.status}`);
+        state.data.automation=d.automation; render();
+        if(action==="set-roots") await load();
+      } catch(e) { toast(`操作失败：${e.message}`,true); }
+    }
+    function filteredPlatformItems() {
+      const query = $("#platformSearch").value.trim().toLowerCase();
+      const items = state.platformItems || [];
+      if (!query) return items;
+      return items.filter((item) => [item.code, item.name, item.businessDomain, item.category].join(" ").toLowerCase().includes(query));
+    }
+
+    function renderPlatform() {
+      const options = $("#platformOptions");
+      const items = filteredPlatformItems().slice(0, 80);
+      options.innerHTML = items.length
+        ? items.map((item) => `<div class="platform-option" data-platform-code="${esc(item.code)}"><b>${esc(item.code)} · ${esc(item.name)}</b><span>${esc(item.businessDomain || "-")} · 剩余 ${esc((item.quotaBefore || {}).remaining ?? 0)} · ${esc(item.category || "-")}</span></div>`).join("")
+        : `<div class="platform-option"><span>没有匹配的可用项目。</span></div>`;
+      const selected = state.platformSelected;
+      $("#platformSelected").innerHTML = selected
+        ? `<b>${esc(selected.code)} · ${esc(selected.name)}</b><span>${esc(selected.businessDomain || "-")} · 配额剩余 ${esc((selected.quotaBefore || {}).remaining ?? 0)} · ${esc(selected.variantName || "")}</span>`
+        : `<b>未选择项目</b><span>从可运行项目中搜索，或点击随机选择。</span>`;
+      $("#addPlatformBtn").disabled = !selected;
+      renderPromptTemplate();
+    }
+
+    function renderedPrompt(project) {
+      const template = state.data?.automation?.promptTemplate || "";
+      const code = String(project?.code || "").trim();
+      const name = String(project?.name || "").trim();
+      const selected = [code, name].filter(Boolean).join(" · ") || "未指定（由执行器从 Solo Manager 选择）";
+      return template
+        .replaceAll("{{selected_project}}", selected)
+        .replaceAll("{{project_code}}", code)
+        .replaceAll("{{project_name}}", name)
+        .replaceAll("{{task_type}}", $("#platformTaskType")?.value || "0-1代码生成")
+        .replaceAll("{{difficulty}}", $("#platformDifficulty")?.value || "困难");
+    }
+
+    function renderPromptTemplate() {
+      const template = state.data?.automation?.promptTemplate || "";
+      const preview = $("#promptTemplatePreview");
+      if (preview) preview.value = template;
+      const count = $("#templateCount");
+      if (count) count.textContent = `${template.replace(/\s/g, "").length} 个非空白字符`;
+      const selectedButton = $("#copySelectedPromptBtn");
+      if (selectedButton) selectedButton.disabled = !state.platformSelected || !template;
+    }
+
+    async function copyText(value, message) {
+      if (!value) return toast("没有可复制的内容", true);
+      try {
+        await navigator.clipboard.writeText(value);
+        toast(message);
+      } catch (error) {
+        toast(`复制失败：${error.message}`, true);
+      }
+    }
+
+    async function loadPlatform(force = false) {
+      if (state.platformLoading) return;
+      state.platformLoading = true;
+      try {
+        const taskType = $("#platformTaskType").value;
+        const params = new URLSearchParams({ taskType, refresh: force ? "1" : "0" });
+        const response = await fetch(`/api/platform/projects?${params}`, { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+        state.platformItems = data.items || [];
+        state.platformSelected = null;
+        renderPlatform();
+      } catch (error) {
+        state.platformItems = [];
+        state.platformSelected = null;
+        $("#platformOptions").innerHTML = `<div class="platform-option platform-error">${esc(error.message)}</div>`;
+        $("#platformOptions").classList.add("open");
+      } finally {
+        state.platformLoading = false;
+      }
+    }
+
+    function render() {
+      const d=state.data||{}, a=d.automation||{}, items=a.items||[], counts=a.counts||{};
+      $("#rootCount").textContent=`${(a.roots||[]).length} 个`;
+      $("#taskCount").textContent=`${(d.tasks||[]).length} 个`;
+      $("#queueCount").textContent=`${counts.pending||0} 待执行`;
+      $("#summary").innerHTML=`<strong>${a.capacity||2}</strong> 并发 · <strong>${counts.pending||0}</strong> 待执行 · <strong>${counts.running||0}</strong> 执行中 · <strong>${counts.failed||0}</strong> 失败`;
+      $("#rootList").innerHTML=(a.roots||[]).map(root=>`<div class="card root"><span class="path" title="${esc(root)}">${esc(root)}</span><button class="btn ghost" type="button" data-root-remove="${esc(root)}" ${(a.roots||[]).length<2?"disabled":""}>删除</button></div>`).join("")||`<div class="empty">未设置监控目录。</div>`;
+      const query=state.query.trim().toLowerCase();
+      const tasks=(d.tasks||[]).filter(t=>!query||[t.name,t.projectCode,t.taskType].join(" ").toLowerCase().includes(query));
+      $("#taskList").innerHTML=tasks.map(t=>`<div class="card task"><div><div class="task-name" title="${esc(t.name)}">${esc(t.name)}</div><div class="meta">${esc(t.projectCode||t.taskType||"—")} · ${esc(t.stateStatus||"")}</div></div><select data-task-side="${esc(t.id)}"><option value="both">A/B</option><option value="A">A</option><option value="B">B</option></select><button class="btn" type="button" data-queue-add="${esc(t.id)}">加入</button></div>`).join("")||`<div class="empty">没有匹配任务。</div>`;
+      $("#queueList").innerHTML=items.length?items.map((item,i)=>`<div class="card queue-item"><span class="idx">${i+1}</span><div><div class="queue-name">${esc(item.taskName)}</div><div class="sub">${esc(item.source === "platform" ? "Solo Manager" : "本地任务")} · ${esc(item.source === "platform" ? "候选竞速" : String(item.side).toUpperCase())}${item.triggerPrompt?" · Prompt 已绑定":""} · <span class="status ${esc(item.status)}">${esc(statusText[item.status]||item.status)}</span>${item.error?` · ${esc(item.error)}`:""}</div></div><div class="qbtns"><button type="button" data-q-action="up" data-id="${esc(item.id)}" ${i===0||item.status==="running"?"disabled":""}>↑</button><button type="button" data-q-action="down" data-id="${esc(item.id)}" ${i===items.length-1||item.status==="running"?"disabled":""}>↓</button>${item.status==="failed"||item.status==="skipped"?`<button type="button" data-q-action="retry" data-id="${esc(item.id)}">重试</button>`:""}${item.triggerPrompt?`<button type="button" data-copy-queue-prompt="${esc(item.id)}">Prompt</button>`:""}<button type="button" data-q-action="remove" data-id="${esc(item.id)}" ${item.status==="running"?"disabled":""}>删除</button></div></div>`).join(""):`<div class="empty">队列为空。请从中间选择任务加入队列。</div>`;
+      if(document.activeElement!==$("#capacityInput")) $("#capacityInput").value=String(a.capacity||2);
+      $("#queueToggleBtn").textContent=a.paused?"启动队列":"暂停队列";
+      $("#queueToggleBtn").classList.toggle("primary",Boolean(a.paused));
+      $("#stats").innerHTML=`<div class="stat"><b>${counts.jobsRunning||0}</b><span>当前任务</span></div><div class="stat"><b>${a.capacity||2}</b><span>并发上限</span></div><div class="stat"><b>${counts.done||0}</b><span>已完成</span></div>`;
+    }
+    document.addEventListener("click", async (e)=>{
+      const add=e.target.closest("[data-queue-add]");
+      if(add){ const id=add.dataset.queueAdd; const side=document.querySelector(`[data-task-side="${id}"]`)?.value||"both"; await api("queue-add",{taskId:id,side}); toast("已加入队列"); return; }
+      const rootRemove=e.target.closest("[data-root-remove]"); if(rootRemove){ const roots=(state.data?.automation?.roots||[]).filter(r=>r!==rootRemove.dataset.rootRemove); await api("set-roots",{roots}); return; }
+      const copyPrompt=e.target.closest("[data-copy-queue-prompt]"); if(copyPrompt){ const item=(state.data?.automation?.items||[]).find(candidate=>candidate.id===copyPrompt.dataset.copyQueuePrompt); await copyText(item?.triggerPrompt||"", "任务 Prompt 已复制"); return; }
+      const q=e.target.closest("[data-q-action]"); if(q){ const id=q.dataset.id,a=q.dataset.qAction; if(a==="up"||a==="down") await api("queue-move",{itemId:id,delta:a==="up"?-1:1}); else if(a==="remove") await api("queue-remove",{itemId:id}); else if(a==="retry") await api("queue-retry",{itemId:id}); }
+    });
+    $("#addRootBtn").addEventListener("click",async()=>{ const v=$("#rootInput").value.trim(); if(!v)return toast("请输入目录",true); const roots=[...(state.data?.automation?.roots||[])]; if(!roots.includes(v))roots.push(v); await api("set-roots",{roots}); $("#rootInput").value=""; });
+    $("#rootInput").addEventListener("keydown",e=>{ if(e.key==="Enter") $("#addRootBtn").click(); });
+    $("#searchInput").addEventListener("input",e=>{ state.query=e.target.value; render(); });
+    $("#queueToggleBtn").addEventListener("click",()=>api("set-paused",{paused:!Boolean(state.data?.automation?.paused)}));
+    $("#queueClearBtn").addEventListener("click",()=>api("queue-clear"));
+    $("#saveCapacityBtn").addEventListener("click",()=>api("set-capacity",{capacity:Number($("#capacityInput").value)}));
+    $("#platformSearch").addEventListener("input", () => { renderPlatform(); $("#platformOptions").classList.add("open"); });
+    $("#platformSearch").addEventListener("focus", () => { renderPlatform(); $("#platformOptions").classList.add("open"); });
+    document.addEventListener("click", (e) => {
+      const option = e.target.closest("[data-platform-code]");
+      if (option) {
+        state.platformSelected = state.platformItems.find((item) => item.code === option.dataset.platformCode) || null;
+        $("#platformSearch").value = state.platformSelected ? `${state.platformSelected.code} · ${state.platformSelected.name}` : "";
+        $("#platformOptions").classList.remove("open");
+        renderPlatform();
+        return;
+      }
+      if (!e.target.closest(".combo")) $("#platformOptions").classList.remove("open");
+    });
+    $("#platformTaskType").addEventListener("change", () => loadPlatform(true));
+    $("#platformDifficulty").addEventListener("change", () => {});
+    $("#randomProjectBtn").addEventListener("click", () => {
+      const items = filteredPlatformItems();
+      if (!items.length) return toast("当前筛选条件下没有可用项目", true);
+      state.platformSelected = items[Math.floor(Math.random() * items.length)];
+      $("#platformSearch").value = `${state.platformSelected.code} · ${state.platformSelected.name}`;
+      $("#platformOptions").classList.remove("open");
+      renderPlatform();
+      toast(`随机选中：${state.platformSelected.code}`);
+    });
+    $("#addPlatformBtn").addEventListener("click", async () => {
+      const selected = state.platformSelected;
+      if (!selected) return toast("请先选择 Solo Manager 项目", true);
+      await api("queue-add-platform", {
+        project: selected,
+        taskType: $("#platformTaskType").value,
+        difficulty: $("#platformDifficulty").value,
+      });
+      toast(`已加入队列：${selected.code}`);
+      state.platformSelected = null;
+      $("#platformSearch").value = "";
+      renderPlatform();
+    });
+    $("#copyTemplateBtn").addEventListener("click", () => copyText(state.data?.automation?.promptTemplate || "", "模板已复制"));
+    $("#copySelectedPromptBtn").addEventListener("click", () => copyText(renderedPrompt(state.platformSelected), "已复制当前项目 Prompt"));
+    $("#platformTaskType").addEventListener("change", renderPromptTemplate);
+    $("#platformDifficulty").addEventListener("change", renderPromptTemplate);
+    $("#refreshBtn").addEventListener("click", async () => { await load(); await loadPlatform(true); });
+    load();
+    loadPlatform();
+  </script>
+</body>
+</html>
