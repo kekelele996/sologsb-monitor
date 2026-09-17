@@ -75,6 +75,8 @@ python3 server.py --root /path/to/task-root --port 8790
 - `server.host` / `server.port`：监听地址与端口。
 - `server.allowRemoteActions`：是否允许局域网客户端执行续跑，默认 `false`。
 - `automation.capacity`：自动化队列最大并发任务数。
+- `automation.startupTimeoutSeconds`：桌面任务提交后等待独立任务目录创建的最长时间；
+  超时会停止僵死执行器并释放并发名额，默认 300 秒。
 - `automation.paused`：队列是否暂停，默认暂停。
 - `automation.tickSeconds`：调度轮询间隔。
 - `automation.promptTemplate`：自动触发任务的 Prompt 模板，支持 `{{selected_project}}`、`{{project_code}}`、`{{project_name}}`、`{{task_type}}`、`{{difficulty}}`。

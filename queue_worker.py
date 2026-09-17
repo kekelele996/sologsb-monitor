@@ -20,6 +20,7 @@ DEFAULT_PUSH_HELPERS = (
     Path.home() / "no_cloud" / "common" / "solo2-migration-20260915" / "payload" / "program" / "solo2-monitor" / "CodexQueuePush.app" / "Contents" / "MacOS" / "CodexQueuePush",
 )
 DEFAULT_WAIT_TIMEOUT = 12 * 60 * 60
+DEFAULT_STARTUP_TIMEOUT = 5 * 60
 TERMINAL_FAILURE_STATES = {"blocked", "failed", "error"}
 
 
@@ -119,6 +120,8 @@ def wait_for_task(
     trigger_prompt_file: Path,
     deep_link: str,
     timeout: float,
+    startup_timeout: float,
+    submitted_at: float,
     writer: LogWriter,
     follower: RolloutLogFollower | None = None,
     prompt_sha256: str = "",
@@ -146,6 +149,24 @@ def wait_for_task(
             return 2
         state = read_json(state_path, {})
         status = str(state.get("status") or "").strip()
+        if (
+            startup_timeout > 0
+            and not task_root.exists()
+            and time.monotonic() - submitted_at >= startup_timeout
+        ):
+            error = f"桌面任务启动超时：{startup_timeout:g} 秒内未创建任务目录"
+            writer.emit(f"[失败] {error}")
+            write_result(result_file, {
+                "status": "failed",
+                "stage": "desktop-start-timeout",
+                "workdir": str(workdir),
+                "taskRoot": str(task_root),
+                "stateStatus": last_status,
+                "error": error,
+                "triggerPromptPath": str(trigger_prompt_file),
+                "deepLink": deep_link,
+            })
+            return 2
         if status and status != last_status:
             writer.emit(f"[状态] {status}")
             _write_running_result(
@@ -212,6 +233,7 @@ def main() -> int:
     parser.add_argument("--difficulty", default="困难")
     parser.add_argument("--side", default="both", choices=["A", "B", "both"])
     parser.add_argument("--wait-timeout", type=float, default=DEFAULT_WAIT_TIMEOUT)
+    parser.add_argument("--startup-timeout", type=float, default=DEFAULT_STARTUP_TIMEOUT)
     parser.add_argument("--log-file", type=Path)
     parser.add_argument("--result-file", type=Path, required=True)
     parser.add_argument("--trigger-prompt-file", type=Path, required=True)
@@ -350,6 +372,7 @@ def main() -> int:
         prompt_sha256=prompt_sha256,
     )
     writer.emit("[桌面] 任务已提交，正在定位 ChatGPT 执行轨迹")
+    submitted_at = time.monotonic()
     follower: RolloutLogFollower | None = None
     initial_state = read_json(task_root / "monitor" / "state.json", {})
     initial_status = str(initial_state.get("status") or "")
@@ -373,6 +396,8 @@ def main() -> int:
         trigger_prompt_file=trigger_prompt_file,
         deep_link=deep_link,
         timeout=args.wait_timeout,
+        startup_timeout=args.startup_timeout,
+        submitted_at=submitted_at,
         writer=writer,
         follower=follower,
         prompt_sha256=prompt_sha256,

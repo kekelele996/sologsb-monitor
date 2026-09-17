@@ -182,6 +182,36 @@ class QueueWorkerTests(unittest.TestCase):
             self.assertEqual(metadata["stage"], "task-init")
             self.assertEqual(metadata["error"], "项目已被占用")
 
+    def test_missing_task_root_times_out_before_full_wait(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            workdir = root / "work"
+            workdir.mkdir()
+            task_root = workdir / "cy-999-20260918-120000"
+            trigger_prompt = root / "prompt.md"
+            trigger_prompt.write_text("执行任务。", encoding="utf-8")
+            result_file = root / "result.json"
+            writer = queue_worker.LogWriter(root / "worker.log")
+            with mock.patch.object(queue_worker.time, "monotonic", return_value=10.0):
+                code = queue_worker.wait_for_task(
+                    result_file,
+                    workdir=workdir,
+                    task_root=task_root,
+                    args=mock.Mock(),
+                    push_helper=root / "CodexQueuePush",
+                    trigger_prompt_file=trigger_prompt,
+                    deep_link="codex://threads/new",
+                    timeout=100,
+                    startup_timeout=5,
+                    submitted_at=0.0,
+                    writer=writer,
+                )
+            self.assertEqual(code, 2)
+            metadata = json.loads(result_file.read_text(encoding="utf-8"))
+            self.assertEqual(metadata["status"], "failed")
+            self.assertEqual(metadata["stage"], "desktop-start-timeout")
+            self.assertIn("未创建任务目录", metadata["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -436,6 +436,8 @@
 
     function render() {
       const d=state.data||{}, a=d.automation||{}, items=a.items||[], counts=a.counts||{}, execution=d.summary||{};
+      const capacityInUse=a.capacityInUse??counts.jobsActive??counts.jobsRunning??0;
+      const staleJobs=counts.jobsStale||0;
       const allRoots=a.roots||[];
       const activeRoots=new Set(a.activeRoots ?? allRoots);
       $("#rootCount").textContent=`${activeRoots.size}/${allRoots.length} 个监控中`;
@@ -443,7 +445,7 @@
       $("#queueCount").textContent=`${counts.pending||0} 待执行`;
       const visiblePlatformCount = state.platformLoading ? "—" : platformScopeItems().length;
       const platformScopeLabel = mergeProjectPoolToggle.checked ? "个可用项目" : "个我的项目";
-      $("#summary").innerHTML=`<strong>${a.capacity||2}</strong> 并发 · <strong>${counts.pending||0}</strong> 待执行 · <strong>${execution.activeTasks||0}</strong> 执行中 · <strong>${counts.failed||0}</strong> 失败 · <strong>${visiblePlatformCount}</strong> ${platformScopeLabel}`;
+      $("#summary").innerHTML=`<strong>${capacityInUse}</strong>/${a.capacity||2} 并发 · <strong>${counts.pending||0}</strong> 待执行 · <strong>${execution.activeTasks||0}</strong> 任务执行中 · <strong>${counts.failed||0}</strong> 失败${staleJobs?` · <strong>${staleJobs}</strong> 个启动超时待回收`:""} · <strong>${visiblePlatformCount}</strong> ${platformScopeLabel}`;
       $("#rootList").innerHTML=allRoots.map(root=>{const active=activeRoots.has(root);return `<div class="card root ${active?"":"is-inactive"}"><span class="path" title="${esc(root)}">${esc(root)}</span><div class="root-actions"><label class="root-toggle" title="${active?"监控页正在扫描":"监控页已停用"}"><input type="checkbox" role="switch" data-root-active="${esc(root)}" ${active?"checked":""}><span>${active?"监控中":"未监控"}</span></label><button class="btn ghost" type="button" data-root-remove="${esc(root)}" ${allRoots.length<2?"disabled":""}>删除</button></div></div>`}).join("")||`<div class="empty">未设置监控目录。</div>`;
       const query=state.query.trim().toLowerCase();
       const tasks=(d.tasks||[]).filter(t=>!query||[t.name,t.projectCode,t.taskType].join(" ").toLowerCase().includes(query));

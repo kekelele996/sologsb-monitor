@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import shlex
 import subprocess
 import sys
@@ -40,6 +41,7 @@ AUTO_LOG_LIMIT = 120
 EVENT_LIMIT = 80
 DEFAULT_PAGE_SIZE = 100
 SUBS_TTL = 60
+DEFAULT_PLATFORM_START_TIMEOUT_SECONDS = 300
 
 SIDES = ("A", "B")
 TERMINAL_TASK_STATUSES = {
@@ -83,6 +85,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "tickSeconds": 3,
         "capacity": 2,
         "cooldownSeconds": 200,
+        "startupTimeoutSeconds": DEFAULT_PLATFORM_START_TIMEOUT_SECONDS,
         "paused": True,
         "promptTemplate": DEFAULT_AUTO_TRIGGER_PROMPT,
     },
@@ -200,7 +203,9 @@ def load_config(path: Path | None = None, roots: Iterable[str] | None = None) ->
         raw = {}
     config = deep_merge(DEFAULT_CONFIG, raw)
     if roots:
-        config["roots"] = [str(Path(item).expanduser().resolve()) for item in roots]
+        resolved = [str(Path(item).expanduser().resolve()) for item in roots]
+        config["roots"] = resolved
+        config.setdefault("monitor", {})["activeRoots"] = resolved
     config["_configPath"] = str(config_path)
     return config
 
@@ -1618,6 +1623,86 @@ class JobManager:
         with self._lock:
             return [copy.deepcopy(item) for item in self._jobs.values() if item.get("status") == "running"]
 
+    @staticmethod
+    def _platform_job_task_root(job: dict[str, Any]) -> Path | None:
+        result_file = Path(str(job.get("resultFile") or ""))
+        result = read_json(result_file, {}) if result_file else {}
+        raw_root = (result.get("taskRoot") if isinstance(result, dict) else "") or job.get("taskRoot")
+        if not str(raw_root or "").strip():
+            return None
+        return Path(str(raw_root)).expanduser().resolve()
+
+    @classmethod
+    def platform_job_started(cls, job: dict[str, Any]) -> bool:
+        result_file = Path(str(job.get("resultFile") or ""))
+        result = read_json(result_file, {}) if result_file else {}
+        if isinstance(result, dict) and str(result.get("stage") or "") == "desktop-task-running":
+            return True
+        task_root = cls._platform_job_task_root(job)
+        if task_root is None:
+            return False
+        return (
+            (task_root / "monitor" / "state.json").is_file()
+            or (task_root / "monitor" / "init-failure.json").is_file()
+        )
+
+    @staticmethod
+    def _terminate_platform_worker(job: dict[str, Any]) -> bool:
+        try:
+            pid = int(job.get("pid") or 0)
+        except (TypeError, ValueError):
+            return False
+        if pid <= 0:
+            return False
+        command = pid_command(pid)
+        if "queue_worker.py" not in command.lower():
+            return False
+        result_file = str(job.get("resultFile") or "")
+        if result_file and result_file not in command:
+            return False
+        try:
+            os.killpg(pid, signal.SIGTERM)
+            return True
+        except ProcessLookupError:
+            return True
+        except OSError:
+            try:
+                os.kill(pid, signal.SIGTERM)
+                return True
+            except OSError:
+                return False
+
+    def reap_stale_platform_jobs(self, startup_timeout_seconds: int | float) -> list[dict[str, Any]]:
+        timeout = max(30.0, float(startup_timeout_seconds or DEFAULT_PLATFORM_START_TIMEOUT_SECONDS))
+        reaped: list[dict[str, Any]] = []
+        with self._lock:
+            for job in self._jobs.values():
+                if job.get("source") != "platform" or job.get("status") != "running":
+                    continue
+                if self.platform_job_started(job):
+                    continue
+                age = age_seconds(job.get("startedAt"))
+                if age is None or age < timeout:
+                    continue
+                terminated = self._terminate_platform_worker(job)
+                job.update({
+                    "status": "failed",
+                    "finishedAt": utc_now(),
+                    "exitCode": -15,
+                    "error": (
+                        f"桌面任务启动超时：{int(timeout)} 秒内未创建任务目录，已释放并发名额"
+                        + ("并停止执行器" if terminated else "；执行器已不可用")
+                    ),
+                })
+                started = parse_time(job.get("startedAt"))
+                job["durationSeconds"] = max(
+                    0.0,
+                    time.time() - (started.timestamp() if started else time.time()),
+                )
+                self._persist(job)
+                reaped.append(copy.deepcopy(job))
+        return reaped
+
     def start(
         self,
         task_root: Path,
@@ -1784,6 +1869,7 @@ class JobManager:
                 "--task-type", str(item.get("taskType") or "0-1代码生成"),
                 "--difficulty", str(item.get("difficulty") or "困难"),
                 "--side", str(item.get("side") or "both"),
+                "--startup-timeout", str(int((self.config.get("automation") or {}).get("startupTimeoutSeconds") or DEFAULT_PLATFORM_START_TIMEOUT_SECONDS)),
                 "--result-file", str(result_file),
             ]
             if push_helper:
@@ -2142,7 +2228,22 @@ class QueueManager:
             items = copy.deepcopy(self._items)
             roots = self._roots_locked()
             active_roots = self._active_roots_locked()
-        running = len(self.jobs.running())
+        startup_timeout = max(
+            30,
+            int(self._automation_cfg().get("startupTimeoutSeconds") or DEFAULT_PLATFORM_START_TIMEOUT_SECONDS),
+        )
+        running_jobs = self.jobs.running()
+        stale_jobs = [
+            job for job in running_jobs
+            if job.get("source") == "platform"
+            and not self.jobs.platform_job_started(job)
+            and (age_seconds(job.get("startedAt")) or 0) >= startup_timeout
+        ]
+        stale_ids = {str(job.get("key") or "") for job in stale_jobs}
+        capacity_jobs = [
+            job for job in running_jobs
+            if str(job.get("key") or "") not in stale_ids
+        ]
         pending = sum(1 for item in items if item.get("status") == "pending")
         active = sum(1 for item in items if item.get("status") == "running")
         cooldown_seconds = max(0, int(self._automation_cfg().get("cooldownSeconds") or 0))
@@ -2168,8 +2269,12 @@ class QueueManager:
                 "done": sum(1 for item in items if item.get("status") == "done"),
                 "failed": sum(1 for item in items if item.get("status") == "failed"),
                 "skipped": sum(1 for item in items if item.get("status") == "skipped"),
-                "jobsRunning": running,
+                "jobsRunning": len(running_jobs),
+                "jobsActive": len(capacity_jobs),
+                "jobsStale": len(stale_jobs),
             },
+            "capacityInUse": len(capacity_jobs),
+            "startupTimeoutSeconds": startup_timeout,
             "updatedAt": utc_now(),
         }
 
@@ -2522,6 +2627,11 @@ class QueueManager:
     def tick(self) -> list[dict[str, Any]]:
         actions: list[dict[str, Any]] = []
         with self._lock:
+            startup_timeout = max(
+                30,
+                int(self._automation_cfg().get("startupTimeoutSeconds") or DEFAULT_PLATFORM_START_TIMEOUT_SECONDS),
+            )
+            self.jobs.reap_stale_platform_jobs(startup_timeout)
             self._sync_running_locked()
             if bool(self._automation_cfg().get("paused", True)):
                 return actions
@@ -2530,7 +2640,12 @@ class QueueManager:
             last_started = parse_time(self._lastStartedAt)
             if last_started and cooldown_seconds and time.time() - last_started.timestamp() < cooldown_seconds:
                 return actions
-            running_jobs = self.jobs.running()
+            running_jobs = [
+                job for job in self.jobs.running()
+                if job.get("source") != "platform"
+                or self.jobs.platform_job_started(job)
+                or (age_seconds(job.get("startedAt")) or 0) < startup_timeout
+            ]
             if len(running_jobs) >= capacity:
                 return actions
             for item in self._items:

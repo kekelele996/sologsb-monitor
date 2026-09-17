@@ -582,7 +582,7 @@ class MonitorCoreTests(unittest.TestCase):
                 "platformItemId": "platform-live",
                 "status": "running",
                 "pid": 4242,
-                "startedAt": "2026-09-18T00:00:00Z",
+                "startedAt": "2020-01-01T00:00:00Z",
                 "logPath": str(log_path),
             }
             log_path.with_suffix(".json").write_text(json.dumps(job), encoding="utf-8")
@@ -594,6 +594,47 @@ class MonitorCoreTests(unittest.TestCase):
             self.assertEqual(len(running), 1)
             self.assertEqual(running[0]["key"], "platform:platform-live")
             self.assertEqual(running[0]["status"], "running")
+
+    def test_stale_platform_worker_is_failed_and_releases_capacity(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            state_dir = root / "jobs"
+            state_dir.mkdir()
+            result_file = root / "result.json"
+            task_root = root / "missing-task"
+            result_file.write_text(
+                json.dumps({
+                    "status": "running",
+                    "stage": "desktop-submitted",
+                    "taskRoot": str(task_root),
+                }),
+                encoding="utf-8",
+            )
+            log_path = state_dir / "20260918-120000-platform-platform-stale.log"
+            job = {
+                "key": "platform:platform-stale",
+                "source": "platform",
+                "platformItemId": "platform-stale",
+                "status": "running",
+                "pid": 4242,
+                "startedAt": "2020-01-01T00:00:00Z",
+                "logPath": str(log_path),
+                "resultFile": str(result_file),
+            }
+            log_path.with_suffix(".json").write_text(json.dumps(job), encoding="utf-8")
+            command = f"python queue_worker.py --result-file {result_file}"
+            with mock.patch.object(monitor_core, "STATE_DIR", root), mock.patch.object(
+                monitor_core, "persisted_job_process_alive", return_value=True
+            ), mock.patch.object(monitor_core, "pid_command", return_value=command), mock.patch.object(
+                monitor_core.os, "killpg"
+            ) as killpg:
+                manager = JobManager(load_config(roots=[str(root)]))
+                reaped = manager.reap_stale_platform_jobs(30)
+            self.assertEqual(len(reaped), 1)
+            self.assertEqual(manager.running(), [])
+            self.assertEqual(reaped[0]["status"], "failed")
+            self.assertIn("未创建任务目录", reaped[0]["error"])
+            killpg.assert_called_once()
 
     def test_job_manager_reloads_running_platform_job_after_restart(self):
         with tempfile.TemporaryDirectory() as temp:
