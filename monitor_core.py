@@ -2116,9 +2116,16 @@ class PlatformProvider:
 class QueueManager:
     """Persistent task queue with capacity-limited automatic execution."""
 
-    def __init__(self, config: dict[str, Any], jobs: JobManager, state_path: Path | None = None):
+    def __init__(
+        self,
+        config: dict[str, Any],
+        jobs: JobManager,
+        state_path: Path | None = None,
+        docker_cache: DockerCache | None = None,
+    ):
         self.config = config
         self.jobs = jobs
+        self.docker_cache = docker_cache
         self.state_path = state_path or QUEUE_STATE_PATH
         self._lock = threading.RLock()
         self._triggered: list[dict[str, Any]] = []
@@ -2218,6 +2225,95 @@ class QueueManager:
         }
         return [root for root in roots if root in active]
 
+    @staticmethod
+    def _container_group_name(container_name: Any) -> str:
+        text = str(container_name or "").strip()
+        prefix = "sologsb-"
+        if not text.startswith(prefix):
+            return ""
+        remainder = text[len(prefix):]
+        marker = "-candidate-"
+        if marker in remainder:
+            return remainder.split(marker, 1)[0]
+        return remainder
+
+    @staticmethod
+    def _platform_job_group(job: dict[str, Any]) -> str:
+        task_root = JobManager._platform_job_task_root(job)
+        if task_root is not None:
+            return task_root.name
+        return str(
+            job.get("projectCode")
+            or job.get("taskName")
+            or job.get("platformItemId")
+            or job.get("key")
+            or ""
+        )
+
+    def _capacity_usage_locked(self, startup_timeout: int) -> tuple[int, dict[str, Any]]:
+        running_jobs = self.jobs.running()
+        if self.docker_cache is None:
+            active_jobs = [
+                job for job in running_jobs
+                if job.get("source") != "platform"
+                or self.jobs.platform_job_started(job)
+                or (age_seconds(job.get("startedAt")) or 0) < startup_timeout
+            ]
+            return len(active_jobs), {
+                "mode": "jobs",
+                "containerGroups": [],
+                "startupReservations": [],
+                "activeJobKeys": [str(job.get("key") or "") for job in active_jobs],
+            }
+
+        docker = self.docker_cache.get()
+        if docker.get("error"):
+            active_jobs = [
+                job for job in running_jobs
+                if job.get("source") != "platform"
+                or self.jobs.platform_job_started(job)
+                or (age_seconds(job.get("startedAt")) or 0) < startup_timeout
+            ]
+            return len(active_jobs), {
+                "mode": "fallback",
+                "containerGroups": [],
+                "startupReservations": [],
+                "activeJobKeys": [str(job.get("key") or "") for job in active_jobs],
+                "error": str(docker.get("error") or ""),
+            }
+
+        container_groups = sorted({
+            self._container_group_name(item.get("name"))
+            for item in docker.get("items") or []
+            if isinstance(item, dict)
+            and str(item.get("state") or "").lower() == "running"
+            and self._container_group_name(item.get("name"))
+        })
+        group_set = set(container_groups)
+        reservations: set[str] = set()
+        active_job_keys: list[str] = []
+        for job in running_jobs:
+            if job.get("source") != "platform":
+                key = str(job.get("key") or "")
+                reservations.add(key)
+                active_job_keys.append(key)
+                continue
+            group = self._platform_job_group(job)
+            if group and group in group_set:
+                active_job_keys.append(str(job.get("key") or ""))
+                continue
+            age = age_seconds(job.get("startedAt"))
+            if age is None or age < startup_timeout:
+                key = group or str(job.get("key") or "")
+                reservations.add(key)
+                active_job_keys.append(str(job.get("key") or ""))
+        return len(container_groups) + len(reservations), {
+            "mode": "containers",
+            "containerGroups": container_groups,
+            "startupReservations": sorted(reservations),
+            "activeJobKeys": active_job_keys,
+        }
+
     def active_roots(self) -> list[str]:
         with self._lock:
             return self._active_roots_locked()
@@ -2228,22 +2324,18 @@ class QueueManager:
             items = copy.deepcopy(self._items)
             roots = self._roots_locked()
             active_roots = self._active_roots_locked()
-        startup_timeout = max(
-            30,
-            int(self._automation_cfg().get("startupTimeoutSeconds") or DEFAULT_PLATFORM_START_TIMEOUT_SECONDS),
-        )
-        running_jobs = self.jobs.running()
-        stale_jobs = [
-            job for job in running_jobs
-            if job.get("source") == "platform"
-            and not self.jobs.platform_job_started(job)
-            and (age_seconds(job.get("startedAt")) or 0) >= startup_timeout
-        ]
-        stale_ids = {str(job.get("key") or "") for job in stale_jobs}
-        capacity_jobs = [
-            job for job in running_jobs
-            if str(job.get("key") or "") not in stale_ids
-        ]
+            startup_timeout = max(
+                30,
+                int(self._automation_cfg().get("startupTimeoutSeconds") or DEFAULT_PLATFORM_START_TIMEOUT_SECONDS),
+            )
+            running_jobs = self.jobs.running()
+            stale_jobs = [
+                job for job in running_jobs
+                if job.get("source") == "platform"
+                and not self.jobs.platform_job_started(job)
+                and (age_seconds(job.get("startedAt")) or 0) >= startup_timeout
+            ]
+            capacity_in_use, capacity_detail = self._capacity_usage_locked(startup_timeout)
         pending = sum(1 for item in items if item.get("status") == "pending")
         active = sum(1 for item in items if item.get("status") == "running")
         cooldown_seconds = max(0, int(self._automation_cfg().get("cooldownSeconds") or 0))
@@ -2270,10 +2362,15 @@ class QueueManager:
                 "failed": sum(1 for item in items if item.get("status") == "failed"),
                 "skipped": sum(1 for item in items if item.get("status") == "skipped"),
                 "jobsRunning": len(running_jobs),
-                "jobsActive": len(capacity_jobs),
+                "jobsActive": len(capacity_detail.get("activeJobKeys") or []),
                 "jobsStale": len(stale_jobs),
+                "containerGroups": len(capacity_detail.get("containerGroups") or []),
+                "startupReservations": len(capacity_detail.get("startupReservations") or []),
             },
-            "capacityInUse": len(capacity_jobs),
+            "capacityInUse": capacity_in_use,
+            "capacityMode": capacity_detail.get("mode"),
+            "containerGroups": capacity_detail.get("containerGroups") or [],
+            "startupReservations": capacity_detail.get("startupReservations") or [],
             "startupTimeoutSeconds": startup_timeout,
             "updatedAt": utc_now(),
         }
@@ -2640,16 +2737,11 @@ class QueueManager:
             last_started = parse_time(self._lastStartedAt)
             if last_started and cooldown_seconds and time.time() - last_started.timestamp() < cooldown_seconds:
                 return actions
-            running_jobs = [
-                job for job in self.jobs.running()
-                if job.get("source") != "platform"
-                or self.jobs.platform_job_started(job)
-                or (age_seconds(job.get("startedAt")) or 0) < startup_timeout
-            ]
-            if len(running_jobs) >= capacity:
+            capacity_in_use, _capacity_detail = self._capacity_usage_locked(startup_timeout)
+            if capacity_in_use >= capacity:
                 return actions
             for item in self._items:
-                if len(running_jobs) >= capacity:
+                if capacity_in_use >= capacity:
                     break
                 if item.get("status") != "pending":
                     continue
@@ -2672,6 +2764,7 @@ class QueueManager:
                     })
                     self._lastStartedAt = utc_now()
                     actions.append({"item": copy.deepcopy(item), "job": job})
+                    capacity_in_use += 1
                     break
                 task_root = Path(str(item.get("taskRoot") or ""))
                 side = str(item.get("side") or "both")
@@ -2701,6 +2794,7 @@ class QueueManager:
                 })
                 self._lastStartedAt = utc_now()
                 actions.append({"item": copy.deepcopy(item), "job": job})
+                capacity_in_use += 1
                 break
             self._save()
         return actions
@@ -2713,7 +2807,7 @@ class MonitorService:
         self.docker_cache = DockerCache(float((config.get("monitor") or {}).get("dockerCacheSeconds") or 2.0))
         self.submissions = SubmissionProvider(config)
         self.jobs = JobManager(config)
-        self.queue = QueueManager(config, self.jobs)
+        self.queue = QueueManager(config, self.jobs, docker_cache=self.docker_cache)
         self.platform = PlatformProvider(config)
         self._lock = threading.RLock()
         self._auto_lock = threading.RLock()

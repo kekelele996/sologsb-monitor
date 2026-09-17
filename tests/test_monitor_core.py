@@ -277,6 +277,89 @@ class MonitorCoreTests(unittest.TestCase):
                 self.assertEqual(snapshot["cooldownSeconds"], 200)
                 self.assertIn("cooldownRemainingSeconds", snapshot)
 
+    def test_queue_capacity_deduplicates_running_container_groups(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            config = load_config(path=root / "config.json", roots=[str(root)])
+            config["automation"].update({
+                "paused": False,
+                "capacity": 2,
+                "cooldownSeconds": 0,
+                "startupTimeoutSeconds": 300,
+            })
+            queue_path = root / "queue.json"
+            queue_path.write_text(
+                json.dumps({
+                    "items": [
+                        {"id": "platform-1", "source": "platform", "projectCode": "cy-next-1", "status": "pending"},
+                        {"id": "platform-2", "source": "platform", "projectCode": "cy-next-2", "status": "pending"},
+                    ]
+                }),
+                encoding="utf-8",
+            )
+
+            class FakeDockerCache:
+                @staticmethod
+                def get():
+                    return {
+                        "error": "",
+                        "items": [
+                            {"name": "sologsb-cy-a-20260918-000000-candidate-1-1-a", "state": "running"},
+                            {"name": "sologsb-cy-a-20260918-000000-candidate-2-1-b", "state": "running"},
+                            {"name": "sologsb-cy-a-20260918-000000-candidate-3-1-c", "state": "running"},
+                            {"name": "sologsb-cy-a-20260918-000000-candidate-1-0-old", "state": "exited"},
+                        ],
+                    }
+
+            running_jobs = [
+                {
+                    "key": "platform:running-a",
+                    "source": "platform",
+                    "status": "running",
+                    "taskRoot": str(root / "cy-a-20260918-000000"),
+                    "startedAt": monitor_core.utc_now(),
+                },
+                {
+                    "key": "platform:finalizing-b",
+                    "source": "platform",
+                    "status": "running",
+                    "taskRoot": str(root / "cy-b-20260918-000000"),
+                    "startedAt": "2020-01-01T00:00:00Z",
+                },
+            ]
+            with mock.patch.object(monitor_core, "STATE_DIR", root):
+                manager = QueueManager(
+                    config,
+                    JobManager(config),
+                    state_path=queue_path,
+                    docker_cache=FakeDockerCache(),
+                )
+                manager._sync_running_locked = lambda: None
+                manager.jobs.running = lambda: [dict(job) for job in running_jobs]
+                starts: list[str] = []
+
+                def fake_start(item, *, reason="queue"):
+                    starts.append(item["id"])
+                    job = {
+                        "key": f"platform:{item['id']}",
+                        "source": "platform",
+                        "status": "running",
+                        "taskRoot": str(root / f"{item['projectCode']}-20260918-999999"),
+                        "startedAt": monitor_core.utc_now(),
+                        "pid": 2000 + len(starts),
+                    }
+                    running_jobs.append(job)
+                    return job
+
+                manager.jobs.start_platform = fake_start
+                self.assertEqual(len(manager.tick()), 1)
+                self.assertEqual(len(manager.tick()), 0)
+                self.assertEqual(starts, ["platform-1"])
+                snapshot = manager.snapshot()
+                self.assertEqual(snapshot["capacityInUse"], 2)
+                self.assertEqual(snapshot["counts"]["containerGroups"], 1)
+                self.assertEqual(snapshot["counts"]["startupReservations"], 1)
+
     def test_successful_queue_item_is_removed_automatically(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

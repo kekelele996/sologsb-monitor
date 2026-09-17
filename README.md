@@ -74,7 +74,8 @@ python3 server.py --root /path/to/task-root --port 8790
 - `skillScript`：留空时使用 `$CODEX_HOME/skills/sologsb-0917/scripts/sologsb.py`；也可显式配置绝对路径。
 - `server.host` / `server.port`：监听地址与端口。
 - `server.allowRemoteActions`：是否允许局域网客户端执行续跑，默认 `false`。
-- `automation.capacity`：自动化队列最大并发任务数。
+- `automation.capacity`：自动化队列最大并发容器组数。同一任务的多候选容器会按项目去重；
+  已提交但尚未创建容器的任务会短暂预留名额，完成任务进入无容器收尾阶段后不再占用名额。
 - `automation.startupTimeoutSeconds`：桌面任务提交后等待独立任务目录创建的最长时间；
   超时会停止僵死执行器并释放并发名额，默认 300 秒。
 - `automation.paused`：队列是否暂停，默认暂停。
