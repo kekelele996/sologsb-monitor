@@ -46,8 +46,15 @@
       border-bottom:1px solid var(--line);
       background:color-mix(in srgb,var(--panel) 84%,var(--bg));
     }
-    .platform-controls { display:flex; gap:6px; min-width:0; }
+    .platform-controls { display:flex; flex-wrap:wrap; gap:6px; min-width:0; }
+    .platform-count { flex:0 0 auto; align-self:center; padding:5px 7px; border:1px solid var(--line); border-radius:999px; color:var(--ok); background:color-mix(in srgb,var(--ok) 8%,var(--panel)); font:650 9px/1 var(--mono); white-space:nowrap; }
     .platform-controls select { width:auto; min-width:110px; }
+    .pool-toggle { display:inline-flex; align-items:center; gap:7px; align-self:center; padding:5px 8px; border:1px solid var(--line); border-radius:3px; background:var(--panel); color:var(--muted); font:600 9px/1 var(--mono); white-space:nowrap; cursor:pointer; }
+    .pool-toggle input { appearance:none; width:28px; height:16px; margin:0; border:1px solid var(--line-strong); border-radius:999px; background:var(--panel-soft); position:relative; flex:0 0 auto; transition:border-color .16s,background .16s; }
+    .pool-toggle input::after { content:""; position:absolute; top:2px; left:2px; width:10px; height:10px; border-radius:50%; background:var(--faint); transition:transform .16s,background .16s; }
+    .pool-toggle input:checked { border-color:var(--b); background:color-mix(in srgb,var(--b) 22%,var(--panel)); }
+    .pool-toggle input:checked::after { transform:translateX(12px); background:var(--b); }
+    .pool-toggle:has(input:checked) { color:var(--text); border-color:color-mix(in srgb,var(--b) 55%,var(--line)); }
     .combo { position:relative; min-width:220px; flex:1; }
     .combo .input { width:100%; }
     .platform-options {
@@ -58,11 +65,18 @@
     .platform-options.open { display:block; }
     .platform-option { padding:7px 8px; border-radius:2px; cursor:pointer; }
     .platform-option:hover { background:var(--panel-soft); }
-    .platform-option b { font:650 10px/1.3 var(--mono); }
+    .platform-option-head, .platform-selected-title { display:flex; align-items:center; gap:7px; min-width:0; }
+    .platform-option b { min-width:0; font:650 10px/1.3 var(--mono); }
     .platform-option span { display:block; margin-top:3px; color:var(--faint); font:500 8px/1.4 var(--mono); }
+    .project-source { display:inline-flex; flex:0 0 auto; padding:2px 5px; border:1px solid var(--line-strong); border-radius:999px; font:650 8px/1 var(--mono); white-space:nowrap; }
+    .project-source.mine { color:var(--ok); border-color:color-mix(in srgb,var(--ok) 52%,var(--line)); background:color-mix(in srgb,var(--ok) 9%,var(--panel)); }
+    .project-source.pool { color:var(--b); border-color:color-mix(in srgb,var(--b) 52%,var(--line)); background:color-mix(in srgb,var(--b) 9%,var(--panel)); }
     .platform-selected { min-width:0; color:var(--muted); font-size:10px; }
     .platform-selected b { color:var(--text); font:650 11px/1.3 var(--mono); }
     .platform-selected span { display:block; margin-top:3px; color:var(--faint); font:500 8px/1.4 var(--mono); }
+    .platform-selected .project-source { display:inline-flex; margin-top:0; color:var(--muted); font:650 8px/1 var(--mono); }
+    .platform-selected .project-source.mine { color:var(--ok); }
+    .platform-selected .project-source.pool { color:var(--b); }
     .platform-actions { display:flex; gap:6px; justify-content:flex-end; }
     .platform-error { color:var(--bad); font-size:10px; }
     .template-panel { border-bottom:1px solid var(--line); background:color-mix(in srgb,var(--panel) 72%,var(--bg)); }
@@ -102,6 +116,15 @@
     .stat { padding:9px; border:1px solid var(--line); background:var(--panel); }
     .stat b { display:block; font:700 17px/1 var(--mono); }
     .stat span { display:block; margin-top:4px; color:var(--faint); font-size:8px; }
+    .log-panel { margin-top:12px; border:1px solid var(--line-strong); border-radius:3px; background:#171c20; overflow:hidden; }
+    .log-panel[hidden] { display:none; }
+    .log-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; border-bottom:1px solid var(--line); background:var(--panel-soft); }
+    .log-head h2 { margin:0; font-size:11px; }
+    .log-head-actions { display:flex; gap:4px; }
+    .log-view { margin:0; max-height:420px; overflow:auto; padding:10px; color:#d8e0dc; background:#171c20; font:500 9px/1.6 var(--mono); white-space:pre-wrap; word-break:break-word; }
+    .inline-log-panel { margin-top:14px; }
+    .inline-log-panel .log-view { min-height:220px; max-height:min(520px,52vh); }
+    .inline-log-panel select { min-height:30px; border-width:0 0 1px; border-radius:0; background:var(--panel-soft); font-size:9px; }
     .empty { padding:16px 4px; color:var(--faint); font-size:10px; }
     .notice { padding:9px 10px; border:1px solid color-mix(in srgb,var(--warn) 45%,var(--line)); background:color-mix(in srgb,var(--warn) 6%,var(--panel)); color:var(--muted); font-size:10px; }
     .toast { position:fixed; right:18px; bottom:18px; z-index:50; max-width:420px; padding:10px 12px; border:1px solid var(--line-strong); background:var(--text); color:var(--bg); opacity:0; transform:translateY(8px); transition:.18s ease; pointer-events:none; font-size:11px; }
@@ -119,6 +142,7 @@
   </header>
   <section class="platform-picker">
     <div class="platform-controls">
+      <span class="platform-count" id="platformAvailableCount">可用项目 —</span>
       <select id="platformTaskType">
         <option>0-1代码生成</option><option>Bug修复</option><option>feature迭代</option><option>代码重构</option><option>工程化</option><option>代码测试</option>
       </select>
@@ -127,6 +151,7 @@
         <input class="input" id="platformSearch" placeholder="搜索 Solo Manager 项目编号 / 名称" autocomplete="off">
         <div class="platform-options" id="platformOptions"></div>
       </div>
+      <label class="pool-toggle" title="打开后同时显示项目池项目"><input id="mergeProjectPoolToggle" type="checkbox" role="switch" aria-label="合并项目池"><span>合并项目池</span></label>
     </div>
     <div class="platform-selected" id="platformSelected"><b>未选择项目</b><span>从可运行项目中搜索，或点击随机选择。</span></div>
     <div class="platform-actions"><button class="btn" id="randomProjectBtn" type="button">随机选择</button><button class="btn primary" id="addPlatformBtn" type="button">加入队列</button></div>
@@ -148,6 +173,11 @@
       <div class="list" id="rootList"></div>
       <div class="row" style="margin-top:10px"><input class="input" id="rootInput" placeholder="/path/to/task-root"><button class="btn" id="addRootBtn" type="button">添加</button></div>
       <div class="notice" style="margin-top:12px">这里只扫描目录，不会直接启动任务。</div>
+      <section class="log-panel inline-log-panel" id="inlineLogPanel">
+        <div class="log-head"><h2>运行日志</h2><div class="log-head-actions"><button class="btn ghost" id="inlineLogRefresh" type="button">刷新</button></div></div>
+        <select id="inlineLogSelect" aria-label="选择运行日志"></select>
+        <pre class="log-view" id="inlineLogView">暂无队列任务日志。</pre>
+      </section>
     </section>
     <section class="column">
       <div class="column-head"><h2>可选任务</h2><span id="taskCount">0 个</span></div>
@@ -160,13 +190,18 @@
       <div class="list" id="queueList"></div>
       <div class="column-head" style="margin-top:18px"><h2>并发控制</h2><span>任务数</span></div>
       <div class="row"><input class="input" id="capacityInput" type="number" min="1" max="20" value="2"><button class="btn" id="saveCapacityBtn" type="button">应用</button></div>
+      <div class="column-head" style="margin-top:14px"><h2>任务冷却</h2><span>秒</span></div>
+      <div class="row"><input class="input" id="cooldownInput" type="number" min="0" max="86400" value="200"><button class="btn" id="saveCooldownBtn" type="button">应用</button></div>
+      <div class="meta" style="margin-top:6px">每启动一个任务后，至少等待该时间再启动下一个任务。</div>
       <div class="stats" id="stats"></div>
     </section>
   </main>
   <div class="toast" id="toast"></div>
   <script>
-    const state = { data:null, query:"", platformItems:[], platformSelected:null, platformLoading:false, loading:false, timer:null };
+    const state = { data:null, query:"", platformItems:[], platformTotal:null, platformSelected:null, platformLoading:false, loading:false, timer:null, logItemId:null, logTimer:null };
     const $ = (s) => document.querySelector(s);
+    const mergeProjectPoolToggle = $("#mergeProjectPoolToggle");
+    try { mergeProjectPoolToggle.checked = localStorage.getItem("sologsb.mergeProjectPool") === "1"; } catch (_) {}
     const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
     const statusText = { pending:"待执行", running:"执行中", done:"已完成", failed:"失败", skipped:"已跳过" };
     function toast(message, error=false) { const n=$("#toast"); n.textContent=message; n.className=`toast show${error?" error":""}`; clearTimeout(n._t); n._t=setTimeout(()=>n.className="toast",3000); }
@@ -189,11 +224,24 @@
         if(!r.ok||!d.ok) throw new Error(d.error||`HTTP ${r.status}`);
         state.data.automation=d.automation; render();
         if(action==="set-roots") await load();
-      } catch(e) { toast(`操作失败：${e.message}`,true); }
+        return true;
+      } catch(e) { toast(`操作失败：${e.message}`,true); return false; }
+    }
+    function isMineProject(item) { return String(item?.stage || "") === "我的项目"; }
+    function projectSource(item) { return isMineProject(item) ? "我的项目" : "项目池"; }
+    function projectSourceClass(item) { return isMineProject(item) ? "mine" : "pool"; }
+    function queuedProjectCodes() {
+      const queued = state.data?.automation?.items || [];
+      return new Set(queued.map((item) => String(item.projectCode || "").trim().toLowerCase()).filter(Boolean));
+    }
+    function platformScopeItems() {
+      const queuedCodes = queuedProjectCodes();
+      const items = mergeProjectPoolToggle.checked ? (state.platformItems || []) : (state.platformItems || []).filter(isMineProject);
+      return items.filter((item) => !queuedCodes.has(String(item.code || "").trim().toLowerCase()));
     }
     function filteredPlatformItems() {
       const query = $("#platformSearch").value.trim().toLowerCase();
-      const items = state.platformItems || [];
+      const items = platformScopeItems();
       if (!query) return items;
       return items.filter((item) => [item.code, item.name, item.businessDomain, item.category].join(" ").toLowerCase().includes(query));
     }
@@ -201,13 +249,23 @@
     function renderPlatform() {
       const options = $("#platformOptions");
       const items = filteredPlatformItems().slice(0, 80);
+      const scopeItems = platformScopeItems();
+      const scopeLabel = mergeProjectPoolToggle.checked ? "可用项目" : "我的项目";
+      $("#platformAvailableCount").textContent = state.platformLoading
+        ? `${scopeLabel} …`
+        : `${scopeLabel} ${state.platformTotal == null ? "—" : scopeItems.length}`;
       options.innerHTML = items.length
-        ? items.map((item) => `<div class="platform-option" data-platform-code="${esc(item.code)}"><b>${esc(item.code)} · ${esc(item.name)}</b><span>${esc(item.businessDomain || "-")} · 剩余 ${esc((item.quotaBefore || {}).remaining ?? 0)} · ${esc(item.category || "-")}</span></div>`).join("")
-        : `<div class="platform-option"><span>没有匹配的可用项目。</span></div>`;
-      const selected = state.platformSelected;
+        ? items.map((item) => `<div class="platform-option" data-platform-code="${esc(item.code)}"><div class="platform-option-head"><b>${esc(item.code)} · ${esc(item.name)}</b><span class="project-source ${projectSourceClass(item)}">${projectSource(item)}</span></div><span>${esc(item.businessDomain || "-")} · 剩余 ${esc((item.quotaBefore || {}).remaining ?? 0)} · ${esc(item.category || "-")}</span></div>`).join("")
+        : `<div class="platform-option"><span>${mergeProjectPoolToggle.checked ? "没有匹配的可用项目。" : "没有匹配的我的项目；可打开“合并项目池”查看项目池。"}</span></div>`;
+      let selected = state.platformSelected;
+      if (selected && !scopeItems.some((item) => item.code === selected.code)) {
+        state.platformSelected = null;
+        selected = null;
+        $("#platformSearch").value = "";
+      }
       $("#platformSelected").innerHTML = selected
-        ? `<b>${esc(selected.code)} · ${esc(selected.name)}</b><span>${esc(selected.businessDomain || "-")} · 配额剩余 ${esc((selected.quotaBefore || {}).remaining ?? 0)} · ${esc(selected.variantName || "")}</span>`
-        : `<b>未选择项目</b><span>从可运行项目中搜索，或点击随机选择。</span>`;
+        ? `<div class="platform-selected-title"><b>${esc(selected.code)} · ${esc(selected.name)}</b><span class="project-source ${projectSourceClass(selected)}">${projectSource(selected)}</span></div><span>${esc(selected.businessDomain || "-")} · 配额剩余 ${esc((selected.quotaBefore || {}).remaining ?? 0)} · ${esc(selected.variantName || "")}</span>`
+        : `<b>未选择项目</b><span>从${mergeProjectPoolToggle.checked ? "可运行项目" : "我的项目"}中搜索，或点击随机选择。</span>`;
       $("#addPlatformBtn").disabled = !selected;
       renderPromptTemplate();
     }
@@ -245,9 +303,88 @@
       }
     }
 
+    function queueLogUrl(itemId) {
+      return `/static/logs/${encodeURIComponent(itemId)}.log`;
+    }
+
+    function queueLogItems() {
+      return (state.data?.automation?.items || []).filter((item) => item.source === "platform");
+    }
+
+    function startQueueLogTimer() {
+      if (state.logTimer) return;
+      state.logTimer = setInterval(refreshQueueLog, 2000);
+    }
+
+    function stopQueueLogTimer() {
+      clearInterval(state.logTimer);
+      state.logTimer = null;
+    }
+
+    function preferredQueueLogItem(items) {
+      return items.find((item) => item.status === "running")
+        || items.find((item) => item.status === "failed")
+        || items.find((item) => item.status === "skipped")
+        || items[0]
+        || null;
+    }
+
+    function renderQueueLogSelector() {
+      const items = queueLogItems();
+      const select = $("#inlineLogSelect");
+      const current = items.find((item) => item.id === state.logItemId);
+      const selected = current || preferredQueueLogItem(items);
+      state.logItemId = selected?.id || null;
+      select.disabled = !items.length;
+      select.innerHTML = items.length
+        ? items.map((item) => `<option value="${esc(item.id)}" ${item.id === state.logItemId ? "selected" : ""}>${esc(item.projectCode || item.taskName || item.id)} · ${esc(statusText[item.status] || item.status)}</option>`).join("")
+        : `<option value="">暂无队列任务</option>`;
+      if (!items.length) {
+        stopQueueLogTimer();
+        $("#inlineLogView").textContent = "暂无队列任务日志。";
+        return;
+      }
+      if (!current && selected) refreshQueueLog();
+      startQueueLogTimer();
+    }
+
+    async function refreshQueueLog() {
+      const view = $("#inlineLogView");
+      const item = queueLogItems().find((candidate) => candidate.id === state.logItemId);
+      if (!item) {
+        view.textContent = "暂无队列任务日志。";
+        stopQueueLogTimer();
+        return;
+      }
+      const waiting = item.status === "pending" ? "任务等待启动，运行日志生成后会自动显示。" : "日志尚未生成。任务启动后会自动刷新。";
+      if (item.status === "pending") {
+        view.textContent = waiting;
+        return;
+      }
+      const nearBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 80;
+      try {
+        const response = await fetch(queueLogUrl(state.logItemId), { cache:"no-store" });
+        const text = response.ok ? await response.text() : waiting;
+        const content = text || waiting;
+        if (view.textContent !== content) view.textContent = content;
+        if (nearBottom) view.scrollTop = view.scrollHeight;
+      } catch (error) {
+        view.textContent = `读取日志失败：${error.message}`;
+      }
+    }
+
+    function openQueueLog(itemId) {
+      state.logItemId = itemId;
+      $("#inlineLogSelect").value = itemId;
+      $("#inlineLogPanel").scrollIntoView({ block:"start", behavior:"smooth" });
+      refreshQueueLog();
+      startQueueLogTimer();
+    }
+
     async function loadPlatform(force = false) {
       if (state.platformLoading) return;
       state.platformLoading = true;
+      let loaded = false;
       try {
         const taskType = $("#platformTaskType").value;
         const params = new URLSearchParams({ taskType, refresh: force ? "1" : "0" });
@@ -255,38 +392,48 @@
         const data = await response.json();
         if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
         state.platformItems = data.items || [];
+        state.platformTotal = Number(data.total ?? state.platformItems.length);
         state.platformSelected = null;
+        loaded = true;
         renderPlatform();
       } catch (error) {
         state.platformItems = [];
+        state.platformTotal = null;
         state.platformSelected = null;
         $("#platformOptions").innerHTML = `<div class="platform-option platform-error">${esc(error.message)}</div>`;
         $("#platformOptions").classList.add("open");
       } finally {
         state.platformLoading = false;
+        if (loaded) renderPlatform();
       }
     }
 
     function render() {
-      const d=state.data||{}, a=d.automation||{}, items=a.items||[], counts=a.counts||{};
+      const d=state.data||{}, a=d.automation||{}, items=a.items||[], counts=a.counts||{}, execution=d.summary||{};
       $("#rootCount").textContent=`${(a.roots||[]).length} 个`;
       $("#taskCount").textContent=`${(d.tasks||[]).length} 个`;
       $("#queueCount").textContent=`${counts.pending||0} 待执行`;
-      $("#summary").innerHTML=`<strong>${a.capacity||2}</strong> 并发 · <strong>${counts.pending||0}</strong> 待执行 · <strong>${counts.running||0}</strong> 执行中 · <strong>${counts.failed||0}</strong> 失败`;
+      const visiblePlatformCount = state.platformLoading ? "—" : platformScopeItems().length;
+      const platformScopeLabel = mergeProjectPoolToggle.checked ? "个可用项目" : "个我的项目";
+      $("#summary").innerHTML=`<strong>${a.capacity||2}</strong> 并发 · <strong>${counts.pending||0}</strong> 待执行 · <strong>${execution.activeTasks||0}</strong> 执行中 · <strong>${counts.failed||0}</strong> 失败 · <strong>${visiblePlatformCount}</strong> ${platformScopeLabel}`;
       $("#rootList").innerHTML=(a.roots||[]).map(root=>`<div class="card root"><span class="path" title="${esc(root)}">${esc(root)}</span><button class="btn ghost" type="button" data-root-remove="${esc(root)}" ${(a.roots||[]).length<2?"disabled":""}>删除</button></div>`).join("")||`<div class="empty">未设置监控目录。</div>`;
       const query=state.query.trim().toLowerCase();
       const tasks=(d.tasks||[]).filter(t=>!query||[t.name,t.projectCode,t.taskType].join(" ").toLowerCase().includes(query));
       $("#taskList").innerHTML=tasks.map(t=>`<div class="card task"><div><div class="task-name" title="${esc(t.name)}">${esc(t.name)}</div><div class="meta">${esc(t.projectCode||t.taskType||"—")} · ${esc(t.stateStatus||"")}</div></div><select data-task-side="${esc(t.id)}"><option value="both">A/B</option><option value="A">A</option><option value="B">B</option></select><button class="btn" type="button" data-queue-add="${esc(t.id)}">加入</button></div>`).join("")||`<div class="empty">没有匹配任务。</div>`;
-      $("#queueList").innerHTML=items.length?items.map((item,i)=>`<div class="card queue-item"><span class="idx">${i+1}</span><div><div class="queue-name">${esc(item.taskName)}</div><div class="sub">${esc(item.source === "platform" ? "Solo Manager" : "本地任务")} · ${esc(item.source === "platform" ? "候选竞速" : String(item.side).toUpperCase())}${item.triggerPrompt?" · Prompt 已绑定":""} · <span class="status ${esc(item.status)}">${esc(statusText[item.status]||item.status)}</span>${item.error?` · ${esc(item.error)}`:""}</div></div><div class="qbtns"><button type="button" data-q-action="up" data-id="${esc(item.id)}" ${i===0||item.status==="running"?"disabled":""}>↑</button><button type="button" data-q-action="down" data-id="${esc(item.id)}" ${i===items.length-1||item.status==="running"?"disabled":""}>↓</button>${item.status==="failed"||item.status==="skipped"?`<button type="button" data-q-action="retry" data-id="${esc(item.id)}">重试</button>`:""}${item.triggerPrompt?`<button type="button" data-copy-queue-prompt="${esc(item.id)}">Prompt</button>`:""}<button type="button" data-q-action="remove" data-id="${esc(item.id)}" ${item.status==="running"?"disabled":""}>删除</button></div></div>`).join(""):`<div class="empty">队列为空。请从中间选择任务加入队列。</div>`;
+      $("#queueList").innerHTML=items.length?items.map((item,i)=>`<div class="card queue-item"><span class="idx">${i+1}</span><div><div class="queue-name">${esc(item.taskName)}</div><div class="sub">${esc(item.source === "platform" ? "Solo Manager" : "本地任务")} · ${esc(item.source === "platform" ? "候选竞速" : String(item.side).toUpperCase())}${item.triggerPrompt?" · Prompt 已绑定":""} · <span class="status ${esc(item.status)}">${esc(statusText[item.status]||item.status)}</span>${item.error?` · ${esc(item.error)}`:""}</div></div><div class="qbtns"><button type="button" data-q-action="up" data-id="${esc(item.id)}" ${i===0||item.status==="running"?"disabled":""}>↑</button><button type="button" data-q-action="down" data-id="${esc(item.id)}" ${i===items.length-1||item.status==="running"?"disabled":""}>↓</button>${item.source==="platform"?`<button type="button" data-log-id="${esc(item.id)}">日志</button>`:""}${item.status==="failed"||item.status==="skipped"?`<button type="button" data-q-action="retry" data-id="${esc(item.id)}">重试</button>`:""}${item.triggerPrompt?`<button type="button" data-copy-queue-prompt="${esc(item.id)}">Prompt</button>`:""}<button type="button" data-q-action="remove" data-id="${esc(item.id)}" ${item.status==="running"?"disabled":""}>删除</button></div></div>`).join(""):`<div class="empty">队列为空。请从中间选择任务加入队列。</div>`;
+      renderQueueLogSelector();
       if(document.activeElement!==$("#capacityInput")) $("#capacityInput").value=String(a.capacity||2);
+      if(document.activeElement!==$("#cooldownInput")) $("#cooldownInput").value=String(a.cooldownSeconds??200);
       $("#queueToggleBtn").textContent=a.paused?"启动队列":"暂停队列";
       $("#queueToggleBtn").classList.toggle("primary",Boolean(a.paused));
-      $("#stats").innerHTML=`<div class="stat"><b>${counts.jobsRunning||0}</b><span>当前任务</span></div><div class="stat"><b>${a.capacity||2}</b><span>并发上限</span></div><div class="stat"><b>${counts.done||0}</b><span>已完成</span></div>`;
+      $("#stats").innerHTML=`<div class="stat"><b>${execution.activeTasks||0}</b><span>当前任务</span></div><div class="stat"><b>${a.capacity||2}</b><span>并发上限</span></div><div class="stat"><b>${counts.done||0}</b><span>已完成</span></div>`;
+      renderPlatform();
     }
     document.addEventListener("click", async (e)=>{
       const add=e.target.closest("[data-queue-add]");
       if(add){ const id=add.dataset.queueAdd; const side=document.querySelector(`[data-task-side="${id}"]`)?.value||"both"; await api("queue-add",{taskId:id,side}); toast("已加入队列"); return; }
       const rootRemove=e.target.closest("[data-root-remove]"); if(rootRemove){ const roots=(state.data?.automation?.roots||[]).filter(r=>r!==rootRemove.dataset.rootRemove); await api("set-roots",{roots}); return; }
+      const logButton=e.target.closest("[data-log-id]"); if(logButton){ openQueueLog(logButton.dataset.logId); return; }
       const copyPrompt=e.target.closest("[data-copy-queue-prompt]"); if(copyPrompt){ const item=(state.data?.automation?.items||[]).find(candidate=>candidate.id===copyPrompt.dataset.copyQueuePrompt); await copyText(item?.triggerPrompt||"", "任务 Prompt 已复制"); return; }
       const q=e.target.closest("[data-q-action]"); if(q){ const id=q.dataset.id,a=q.dataset.qAction; if(a==="up"||a==="down") await api("queue-move",{itemId:id,delta:a==="up"?-1:1}); else if(a==="remove") await api("queue-remove",{itemId:id}); else if(a==="retry") await api("queue-retry",{itemId:id}); }
     });
@@ -295,8 +442,20 @@
     $("#searchInput").addEventListener("input",e=>{ state.query=e.target.value; render(); });
     $("#queueToggleBtn").addEventListener("click",()=>api("set-paused",{paused:!Boolean(state.data?.automation?.paused)}));
     $("#queueClearBtn").addEventListener("click",()=>api("queue-clear"));
+    $("#inlineLogRefresh").addEventListener("click",()=>refreshQueueLog());
+    $("#inlineLogSelect").addEventListener("change",(e)=>openQueueLog(e.target.value));
     $("#saveCapacityBtn").addEventListener("click",()=>api("set-capacity",{capacity:Number($("#capacityInput").value)}));
+    $("#saveCooldownBtn").addEventListener("click",()=>api("set-cooldown",{cooldownSeconds:Number($("#cooldownInput").value)}));
     $("#platformSearch").addEventListener("input", () => { renderPlatform(); $("#platformOptions").classList.add("open"); });
+    mergeProjectPoolToggle.addEventListener("change", () => {
+      try { localStorage.setItem("sologsb.mergeProjectPool", mergeProjectPoolToggle.checked ? "1" : "0"); } catch (_) {}
+      if (state.platformSelected && !platformScopeItems().some((item) => item.code === state.platformSelected.code)) {
+        state.platformSelected = null;
+        $("#platformSearch").value = "";
+      }
+      renderPlatform();
+      render();
+    });
     $("#platformSearch").addEventListener("focus", () => { renderPlatform(); $("#platformOptions").classList.add("open"); });
     document.addEventListener("click", (e) => {
       const option = e.target.closest("[data-platform-code]");
@@ -323,15 +482,17 @@
     $("#addPlatformBtn").addEventListener("click", async () => {
       const selected = state.platformSelected;
       if (!selected) return toast("请先选择 Solo Manager 项目", true);
-      await api("queue-add-platform", {
+      const added = await api("queue-add-platform", {
         project: selected,
         taskType: $("#platformTaskType").value,
         difficulty: $("#platformDifficulty").value,
       });
+      if (!added) return;
       toast(`已加入队列：${selected.code}`);
       state.platformSelected = null;
       $("#platformSearch").value = "";
       renderPlatform();
+      render();
     });
     $("#copyTemplateBtn").addEventListener("click", () => copyText(state.data?.automation?.promptTemplate || "", "模板已复制"));
     $("#copySelectedPromptBtn").addEventListener("click", () => copyText(renderedPrompt(state.platformSelected), "已复制当前项目 Prompt"));

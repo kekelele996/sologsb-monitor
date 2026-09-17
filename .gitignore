@@ -2,6 +2,6 @@ __pycache__/
 *.pyc
 .state/
 *.log
-.env
-.env.*
-!.env.example
+.playwright-cli/
+.ruff_cache/
+.DS_Store

@@ -25,25 +25,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from codex_sessions import active_sessions as scan_codex_sessions, queue_prompt_sha256
+
 APP_DIR = Path(__file__).resolve().parent
-
-
-def bundled_skill_dir(name: str) -> Path:
-    """Find a sibling skill bundle, then fall back to CODEX_HOME."""
-    for parent in APP_DIR.parents:
-        candidate = parent / "skills" / name
-        if candidate.is_dir():
-            return candidate
-    return Path.home() / ".codex" / "skills" / name
-
-
-DEFAULT_ROOT = Path(os.environ.get("SOLOGBS_MONITOR_ROOT", str(Path.cwd()))).expanduser()
-DEFAULT_SKILL_SCRIPT = bundled_skill_dir("sologsb-0917") / "scripts" / "sologsb.py"
-PLATFORM_SCRIPTS = bundled_skill_dir("solo-annotation-loop") / "scripts"
+DEFAULT_ROOT = APP_DIR.parent
+DEFAULT_SKILL_SCRIPT = Path.home() / ".codex" / "skills" / "sologsb-0917" / "scripts" / "sologsb.py"
+PLATFORM_SCRIPTS = Path.home() / ".codex" / "skills" / "solo-annotation-loop" / "scripts"
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_DIR = APP_DIR / ".state"
 AUTO_STATE_PATH = STATE_DIR / "auto.json"
 QUEUE_STATE_PATH = STATE_DIR / "queue.json"
+DISMISSED_TASKS_PATH = STATE_DIR / "dismissed-tasks.json"
 AUTO_LOG_LIMIT = 120
 EVENT_LIMIT = 80
 DEFAULT_PAGE_SIZE = 100
@@ -90,6 +82,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "automation": {
         "tickSeconds": 3,
         "capacity": 2,
+        "cooldownSeconds": 200,
         "paused": True,
         "promptTemplate": DEFAULT_AUTO_TRIGGER_PROMPT,
     },
@@ -279,6 +272,17 @@ def pid_command(pid: Any) -> str:
         return result.stdout.strip()
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return ""
+
+
+def persisted_job_process_alive(job: dict[str, Any]) -> bool:
+    pid = job.get("pid")
+    if not pid_alive(pid):
+        return False
+    command = pid_command(pid)
+    if not command:
+        return True
+    lowered = command.lower()
+    return "queue_worker.py" in lowered or "sologsb" in lowered
 
 
 def runner_pid_alive(record: dict[str, Any], task_root: Path, side: str) -> bool:
@@ -1506,18 +1510,15 @@ class SubmissionProvider:
             return ""
 
     def _fetch_direct(self, cfg: dict[str, Any]) -> dict[str, Any]:
-        keychain_service = os.environ.get("SOLO2_KEYCHAIN_SERVICE", "sologsb-qa")
-        cookie = self._keychain(keychain_service + "-cookie")
-        csrf = self._keychain(keychain_service + "-csrf")
+        cookie = self._keychain("solo2-jzxhnh-cookie")
+        csrf = self._keychain("solo2-jzxhnh-csrf")
         if not cookie:
             return {
                 "items": [],
-                "error": f"读不到 SOLO2 凭据（Keychain service: {keychain_service}-cookie）",
+                "error": "读不到 SOLO2 凭据（Keychain service: solo2-jzxhnh-cookie）",
                 "source": "keychain",
             }
-        base = str(cfg.get("apiBaseUrl") or "").strip().rstrip("/")
-        if not base:
-            return {"items": [], "error": "未配置 SOLO2 地址，请设置 SOLO2_SERVER 或 config.json 的 solo2.apiBaseUrl", "source": "config"}
+        base = str(cfg.get("apiBaseUrl") or "").rstrip("/")
         size = int(cfg.get("pageSize") or DEFAULT_PAGE_SIZE)
         headers = {"Cookie": cookie, "x-csrf-token": csrf, "Accept": "application/json"}
 
@@ -1580,6 +1581,29 @@ class JobManager:
         self._jobs: dict[str, dict[str, Any]] = {}
         self._recent: list[dict[str, Any]] = []
         STATE_DIR.mkdir(parents=True, exist_ok=True)
+        self._recover_running_jobs()
+
+    def _recover_running_jobs(self) -> None:
+        seen_keys: set[str] = set()
+        candidates = sorted(
+            (STATE_DIR / "jobs").glob("*.json"),
+            key=lambda path: path.stat().st_mtime if path.exists() else 0,
+            reverse=True,
+        )
+        for path in candidates:
+            job = read_json(path, {})
+            if not isinstance(job, dict):
+                continue
+            key = str(job.get("key") or "")
+            if not key or key in seen_keys:
+                continue
+            seen_keys.add(key)
+            if job.get("status") != "running" or not persisted_job_process_alive(job):
+                continue
+            persisted = copy.deepcopy(job)
+            persisted["logPath"] = str(persisted.get("logPath") or path.with_suffix(".log"))
+            self._jobs[key] = persisted
+            self._recent.append(persisted)
 
     @staticmethod
     def key(task_root: Path | str, side: str) -> str:
@@ -1673,7 +1697,51 @@ class JobManager:
 
     def get_platform(self, item_id: str) -> dict[str, Any] | None:
         with self._lock:
-            item = self._jobs.get(f"platform:{item_id}")
+            key = f"platform:{item_id}"
+
+            def finalize_dead_job(job: dict[str, Any]) -> dict[str, Any]:
+                result_file = Path(str(job.get("resultFile") or ""))
+                result = read_json(result_file, {}) if result_file else {}
+                if isinstance(result, dict) and result.get("status") == "finished":
+                    job["status"] = "finished"
+                    job["exitCode"] = int(result.get("exitCode") or 0)
+                else:
+                    job["status"] = "failed"
+                    job["exitCode"] = int((result or {}).get("exitCode") or -1)
+                job["finishedAt"] = utc_now()
+                if job["status"] == "failed":
+                    job["error"] = str((result or {}).get("error") or "监控重启后发现执行器进程已退出")
+                return job
+
+            item = self._jobs.get(key)
+            if item is not None and item.get("status") == "running" and not persisted_job_process_alive(item):
+                item = finalize_dead_job(item)
+                log_path = Path(str(item.get("logPath") or ""))
+                if log_path:
+                    try:
+                        atomic_write_json(log_path.with_suffix(".json"), item)
+                    except OSError:
+                        pass
+            if item is None:
+                pattern = f"*-platform-{safe_slug(item_id)}.json"
+                candidates = sorted(
+                    (STATE_DIR / "jobs").glob(pattern),
+                    key=lambda path: path.stat().st_mtime if path.exists() else 0,
+                    reverse=True,
+                )
+                for path in candidates:
+                    persisted = read_json(path, {})
+                    if not isinstance(persisted, dict) or persisted.get("key") != key:
+                        continue
+                    if persisted.get("status") == "running" and not persisted_job_process_alive(persisted):
+                        persisted = finalize_dead_job(persisted)
+                        try:
+                            atomic_write_json(path, persisted)
+                        except OSError:
+                            pass
+                    item = persisted
+                    self._jobs[key] = persisted
+                    break
             return copy.deepcopy(item) if item else None
 
     def start_platform(self, item: dict[str, Any], *, reason: str = "queue") -> dict[str, Any]:
@@ -1691,6 +1759,7 @@ class JobManager:
                 raise MonitorError(f"找不到 sologsb CLI：{script}")
             if not worker.is_file():
                 raise MonitorError(f"找不到队列 worker：{worker}")
+            push_helper = str((self.config.get("automation") or {}).get("codexQueuePush") or "").strip()
             roots = [Path(value).expanduser().resolve() for value in self.config.get("roots") or [DEFAULT_ROOT]]
             workdir = roots[0] if roots else DEFAULT_ROOT
             workdir.mkdir(parents=True, exist_ok=True)
@@ -1717,6 +1786,8 @@ class JobManager:
                 "--side", str(item.get("side") or "both"),
                 "--result-file", str(result_file),
             ]
+            if push_helper:
+                command.extend(["--push-helper", push_helper])
             if trigger_prompt_path:
                 command.extend(["--trigger-prompt-file", str(trigger_prompt_path)])
             env = os.environ.copy()
@@ -1964,17 +2035,85 @@ class QueueManager:
         self.jobs = jobs
         self.state_path = state_path or QUEUE_STATE_PATH
         self._lock = threading.RLock()
+        self._triggered: list[dict[str, Any]] = []
+        self._lastStartedAt = ""
         self._items = self._load()
+        self._recover_triggered()
 
     def _load(self) -> list[dict[str, Any]]:
         raw = read_json(self.state_path, {})
+        triggered = raw.get("triggered") if isinstance(raw, dict) else []
+        self._triggered = [item for item in triggered if isinstance(item, dict)] if isinstance(triggered, list) else []
+        self._lastStartedAt = str(raw.get("lastStartedAt") or "") if isinstance(raw, dict) else ""
         items = raw.get("items") if isinstance(raw, dict) else []
         if not isinstance(items, list):
             return []
         return [item for item in items if isinstance(item, dict)]
 
     def _save(self) -> None:
-        atomic_write_json(self.state_path, {"items": self._items, "updatedAt": utc_now()})
+        atomic_write_json(
+            self.state_path,
+            {
+                "items": self._items,
+                "triggered": self._triggered[-200:],
+                "lastStartedAt": self._lastStartedAt,
+                "updatedAt": utc_now(),
+            },
+        )
+
+    def _recover_triggered(self) -> None:
+        known = {str(item.get("id") or "") for item in self._triggered}
+        added = False
+        roots = [Path(value).expanduser().resolve() for value in self.config.get("roots") or []]
+        workdir = roots[0] if roots else DEFAULT_ROOT
+        candidates = sorted(
+            (STATE_DIR / "jobs").glob("*-platform-*.json"),
+            key=lambda path: path.stat().st_mtime if path.exists() else 0,
+            reverse=True,
+        )
+        for path in candidates:
+            job = read_json(path, {})
+            if not isinstance(job, dict):
+                continue
+            item_id = str(job.get("platformItemId") or "")
+            if not item_id or item_id in known:
+                continue
+            result = read_json(Path(str(job.get("resultFile") or "")), {})
+            if not isinstance(result, dict) or result.get("stage") not in {"desktop-submitted", "desktop-task-running"}:
+                continue
+            task_root = Path(str(result.get("taskRoot") or job.get("taskRoot") or ""))
+            task_name = task_root.name
+            trigger_path = Path(str(job.get("triggerPromptPath") or ""))
+            if not task_name or not trigger_path.is_file():
+                continue
+            trigger_prompt = trigger_path.read_text(encoding="utf-8").strip()
+            prompt = (
+                "本次监控队列已分配唯一任务名。\n"
+                f"- 监控工作目录：`{workdir}`\n"
+                f"- 唯一任务名：`{task_name}`\n"
+                "- 必须使用该任务名创建独立目录，不得复用已存在目录。\n\n"
+                f"{trigger_prompt}\n"
+            )
+            self._triggered.append({
+                "id": item_id,
+                "source": "platform",
+                "taskRoot": str(task_root),
+                "taskName": task_name,
+                "projectCode": str(job.get("projectCode") or ""),
+                "triggerPrompt": trigger_prompt,
+                "promptSha256": str(result.get("promptSha256") or queue_prompt_sha256(prompt)),
+                "triggeredAt": utc_now(),
+                "removedReason": "triggered",
+            })
+            known.add(item_id)
+            added = True
+        self._triggered = self._triggered[-200:]
+        if added:
+            self._save()
+
+    def triggered_items(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return copy.deepcopy(self._triggered)
 
     def _automation_cfg(self) -> dict[str, Any]:
         return self.config.setdefault("automation", {})
@@ -1986,9 +2125,19 @@ class QueueManager:
         running = len(self.jobs.running())
         pending = sum(1 for item in items if item.get("status") == "pending")
         active = sum(1 for item in items if item.get("status") == "running")
+        cooldown_seconds = max(0, int(self._automation_cfg().get("cooldownSeconds") or 0))
+        started_at = parse_time(self._lastStartedAt)
+        cooldown_remaining = (
+            max(0.0, cooldown_seconds - (time.time() - started_at.timestamp()))
+            if started_at and cooldown_seconds
+            else 0.0
+        )
         return {
             "roots": list(self.config.get("roots") or []),
             "capacity": int(self._automation_cfg().get("capacity") or 2),
+            "cooldownSeconds": cooldown_seconds,
+            "cooldownRemainingSeconds": round(cooldown_remaining, 1),
+            "lastStartedAt": self._lastStartedAt,
             "paused": bool(self._automation_cfg().get("paused", True)),
             "promptTemplate": str(self._automation_cfg().get("promptTemplate") or DEFAULT_AUTO_TRIGGER_PROMPT),
             "items": items,
@@ -2149,6 +2298,15 @@ class QueueManager:
         save_config(self.config, config_path)
         return self.snapshot()
 
+    def set_cooldown(self, seconds: int) -> dict[str, Any]:
+        value = int(seconds)
+        if value < 0 or value > 86400:
+            raise MonitorError("任务冷却时间必须在 0 到 86400 秒之间")
+        self._automation_cfg()["cooldownSeconds"] = value
+        config_path = Path(str(self.config.get("_configPath") or CONFIG_PATH))
+        save_config(self.config, config_path)
+        return self.snapshot()
+
     def set_roots(self, roots: list[str]) -> dict[str, Any]:
         resolved: list[str] = []
         for raw in roots:
@@ -2188,18 +2346,44 @@ class QueueManager:
 
     def _sync_running_locked(self) -> None:
         changed = False
-        for item in self._items:
-            if item.get("status") != "running":
+        remove_ids: set[str] = set()
+        triggered_ids: set[str] = set()
+        for item in list(self._items):
+            item_id = str(item.get("id") or "")
+            if item.get("status") == "done":
+                if item_id:
+                    remove_ids.add(item_id)
+                changed = True
                 continue
             if item.get("source") == "platform":
-                item_id = str(item.get("id") or "")
                 job = self.jobs.get_platform(item_id)
+                result_file = Path(str((job or {}).get("resultFile") or ""))
+                result = read_json(result_file, {}) if result_file else {}
+                if (
+                    isinstance(result, dict)
+                    and result.get("taskRoot")
+                    and result.get("stage") in {"desktop-submitted", "desktop-task-running"}
+                ):
+                    if item_id:
+                        remove_ids.add(item_id)
+                        triggered_ids.add(item_id)
+                        item["triggeredAt"] = item.get("triggeredAt") or utc_now()
+                        item["promptSha256"] = str(result.get("promptSha256") or item.get("promptSha256") or "")
+                    changed = True
+                    continue
+                if item.get("status") == "pending" and job and job.get("status") == "running":
+                    item["status"] = "running"
+                    item["startedAt"] = job.get("startedAt") or item.get("startedAt") or utc_now()
+                    item["finishedAt"] = ""
+                    item["jobPid"] = job.get("pid")
+                    item["error"] = ""
+                    changed = True
+                if item.get("status") != "running":
+                    continue
                 if job and job.get("status") == "running":
                     if item.get("jobPid") != job.get("pid"):
                         item["jobPid"] = job.get("pid")
                         changed = True
-                    result_file = Path(str(job.get("resultFile") or ""))
-                    result = read_json(result_file, {}) if result_file else {}
                     if isinstance(result, dict) and result.get("taskRoot") and item.get("taskRoot") != result.get("taskRoot"):
                         item["taskRoot"] = result.get("taskRoot")
                         changed = True
@@ -2207,12 +2391,16 @@ class QueueManager:
                 if job and job.get("status") in {"finished", "failed"}:
                     item["status"] = "done" if job.get("status") == "finished" else "failed"
                     item["error"] = "" if job.get("status") == "finished" else f"执行器退出码 {job.get('exitCode')}"
+                    if job.get("status") == "finished" and item_id:
+                        remove_ids.add(item_id)
                 else:
                     item["status"] = "pending"
                     item["error"] = "监控服务重启或平台任务执行器已退出，已重新排队"
                 item["finishedAt"] = utc_now() if item.get("status") in {"done", "failed"} else ""
                 item["jobPid"] = ""
                 changed = True
+                continue
+            if item.get("status") != "running":
                 continue
             task_root = Path(str(item.get("taskRoot") or ""))
             side = str(item.get("side") or "both")
@@ -2235,6 +2423,18 @@ class QueueManager:
             item["finishedAt"] = utc_now() if item.get("status") in {"done", "failed"} else ""
             item["jobPid"] = ""
             changed = True
+        if remove_ids:
+            for archived in self._items:
+                if str(archived.get("id") or "") in triggered_ids:
+                    previous = next(
+                        (value for value in self._triggered if value.get("id") == archived.get("id")),
+                        None,
+                    )
+                    if previous is None:
+                        self._triggered.append(copy.deepcopy(archived))
+                    else:
+                        previous.update(copy.deepcopy(archived))
+            self._items = [item for item in self._items if str(item.get("id") or "") not in remove_ids]
         if changed:
             self._save()
 
@@ -2245,6 +2445,10 @@ class QueueManager:
             if bool(self._automation_cfg().get("paused", True)):
                 return actions
             capacity = int(self._automation_cfg().get("capacity") or 2)
+            cooldown_seconds = max(0, int(self._automation_cfg().get("cooldownSeconds") or 0))
+            last_started = parse_time(self._lastStartedAt)
+            if last_started and cooldown_seconds and time.time() - last_started.timestamp() < cooldown_seconds:
+                return actions
             running_jobs = self.jobs.running()
             if len(running_jobs) >= capacity:
                 return actions
@@ -2270,9 +2474,9 @@ class QueueManager:
                         "jobPid": job.get("pid"),
                         "error": "",
                     })
+                    self._lastStartedAt = utc_now()
                     actions.append({"item": copy.deepcopy(item), "job": job})
-                    running_jobs = self.jobs.running()
-                    continue
+                    break
                 task_root = Path(str(item.get("taskRoot") or ""))
                 side = str(item.get("side") or "both")
                 if not (task_root / "monitor" / "state.json").is_file():
@@ -2299,8 +2503,9 @@ class QueueManager:
                     "jobPid": job.get("pid"),
                     "error": "",
                 })
+                self._lastStartedAt = utc_now()
                 actions.append({"item": copy.deepcopy(item), "job": job})
-                running_jobs = self.jobs.running()
+                break
             self._save()
         return actions
 
@@ -2317,6 +2522,23 @@ class MonitorService:
         self._lock = threading.RLock()
         self._auto_lock = threading.RLock()
         self._auto = self._load_auto()
+        self._dismissed = self._load_dismissed_tasks()
+
+    def _load_dismissed_tasks(self) -> dict[str, dict[str, Any]]:
+        raw = read_json(DISMISSED_TASKS_PATH, {})
+        items = raw.get("items") if isinstance(raw, dict) else raw
+        if isinstance(items, list):
+            return {str(task_id): {"dismissedAt": ""} for task_id in items if str(task_id)}
+        if not isinstance(items, dict):
+            return {}
+        return {
+            str(task_id): copy.deepcopy(value) if isinstance(value, dict) else {}
+            for task_id, value in items.items()
+            if str(task_id)
+        }
+
+    def _save_dismissed_tasks_locked(self) -> None:
+        atomic_write_json(DISMISSED_TASKS_PATH, {"items": copy.deepcopy(self._dismissed), "updatedAt": utc_now()})
 
     def _load_auto(self) -> dict[str, Any]:
         raw = read_json(AUTO_STATE_PATH, {})
@@ -2459,7 +2681,61 @@ class MonitorService:
             self._task_snapshot(root, stale_seconds, now, docker)
             for root in task_roots
         ]
+        with self._lock:
+            dismissed_ids = set(self._dismissed)
+        tasks = [task for task in tasks if str(task.get("id") or "") not in dismissed_ids]
         tasks.sort(key=self._task_sort_key, reverse=True)
+        queue_snapshot = self.queue.snapshot()
+        task_prompts: dict[str, str] = {}
+        workdir = roots[0] if roots else Path(str(self.config.get("roots", [DEFAULT_ROOT])[0]))
+        queue_sources = [
+            item for item in (queue_snapshot.get("items") or [])
+            if item.get("status") == "running" and item.get("source") == "platform"
+        ]
+        queue_sources.extend(self.queue.triggered_items())
+        seen_trigger_items: set[str] = set()
+        for item in queue_sources:
+            item_id = str(item.get("id") or "")
+            if item_id and item_id in seen_trigger_items:
+                continue
+            if item_id:
+                seen_trigger_items.add(item_id)
+            task_name = Path(str(item.get("taskRoot") or "")).name
+            trigger_prompt = str(item.get("triggerPrompt") or "").strip()
+            if not task_name or not trigger_prompt:
+                continue
+            prompt_sha256 = str(item.get("promptSha256") or "")
+            if not prompt_sha256:
+                prompt = (
+                    "本次监控队列已分配唯一任务名。\n"
+                    f"- 监控工作目录：`{workdir}`\n"
+                    f"- 唯一任务名：`{task_name}`\n"
+                    "- 必须使用该任务名创建独立目录，不得复用已存在目录。\n\n"
+                    f"{trigger_prompt}\n"
+                )
+                prompt_sha256 = queue_prompt_sha256(prompt)
+            task_prompts[task_name] = prompt_sha256
+        app_sessions = scan_codex_sessions(
+            roots,
+            task_prompts=task_prompts,
+            max_idle_sec=float(cfg_monitor.get("sessionMaxIdleSeconds") or 6 * 3600),
+        ) if task_prompts else []
+        sessions_by_task: dict[str, list[dict[str, Any]]] = {}
+        for session in app_sessions:
+            task_name = str(session.get("taskName") or "")
+            if task_name:
+                sessions_by_task.setdefault(task_name, []).append(session)
+        for task in tasks:
+            matched_sessions = sessions_by_task.get(str(task.get("name") or ""), [])
+            if task.get("stateStatus") in TERMINAL_TASK_STATUSES:
+                matched_sessions = []
+            task["appSessions"] = matched_sessions
+            task["appSession"] = task["appSessions"][0] if task["appSessions"] else None
+            task["active"] = bool(
+                task["appSessions"]
+                or any((item or {}).get("active") for item in (task.get("sides") or {}).values())
+                or any((item or {}).get("active") for item in (task.get("candidates") or []))
+            )
         submissions = (
             self.submissions.get(force=force_submissions)
             if fetch_submissions
@@ -2483,7 +2759,7 @@ class MonitorService:
                 "log": list((self._auto.get("log") or [])[-30:]),
             },
             "jobs": self.jobs.running(),
-            "automation": self.queue.snapshot(),
+            "automation": queue_snapshot,
             "docker": {"error": docker.get("error", "")},
             "config": {
                 "pollSeconds": int(cfg_monitor.get("pollSeconds") or 3),
@@ -2593,35 +2869,66 @@ class MonitorService:
 
     @staticmethod
     def _summary(tasks: list[dict[str, Any]]) -> dict[str, Any]:
-        active = 0
-        stale = 0
-        blocked = 0
+        active_tasks = 0
+        active_instances = 0
+        stale_tasks = 0
+        stale_instances = 0
+        blocked_tasks = 0
+        blocked_instances = 0
         staged = 0
+        active_session_ids: set[str] = set()
         for task in tasks:
+            task_active = False
+            task_stale = False
+            task_blocked = False
             for side in SIDES:
                 data = (task.get("sides") or {}).get(side) or {}
                 if data.get("active"):
-                    active += 1
+                    active_instances += 1
+                    task_active = True
                 if data.get("stale"):
-                    stale += 1
+                    stale_instances += 1
+                    task_stale = True
                 if data.get("status") == "blocked":
-                    blocked += 1
+                    blocked_instances += 1
+                    task_blocked = True
                 if data.get("status") in SIDE_DONE_STATUSES:
                     staged += 1
             for data in task.get("candidates") or []:
                 if data.get("mappedSide"):
                     continue
                 if data.get("active"):
-                    active += 1
+                    active_instances += 1
+                    task_active = True
                 if data.get("stale"):
-                    stale += 1
+                    stale_instances += 1
+                    task_stale = True
                 if data.get("status") == "blocked":
-                    blocked += 1
+                    blocked_instances += 1
+                    task_blocked = True
+            app_sessions = task.get("appSessions") or []
+            for session in app_sessions:
+                thread_id = str(session.get("threadId") or session.get("sessionId") or "")
+                if thread_id:
+                    active_session_ids.add(thread_id)
+                task_active = True
+            if not task_active and task.get("active"):
+                task_active = True
+            active_tasks += int(task_active)
+            stale_tasks += int(task_stale)
+            blocked_tasks += int(task_blocked)
         return {
             "tasks": len(tasks),
-            "activeSides": active,
-            "staleSides": stale,
-            "blockedSides": blocked,
+            "activeTasks": active_tasks,
+            "activeInstances": active_instances,
+            "activeAppSessions": len(active_session_ids),
+            "activeSides": active_instances,
+            "staleTasks": stale_tasks,
+            "staleInstances": stale_instances,
+            "staleSides": stale_instances,
+            "blockedTasks": blocked_tasks,
+            "blockedInstances": blocked_instances,
+            "blockedSides": blocked_instances,
             "stagedSides": staged,
         }
 
@@ -2631,6 +2938,24 @@ class MonitorService:
             if task.get("id") == task_id:
                 return task
         return None
+
+    def dismiss_task(self, task_id: str) -> dict[str, Any]:
+        task_id = str(task_id or "").strip()
+        if not task_id:
+            raise MonitorError("缺少任务 ID")
+        task = self.task_by_id(task_id)
+        if not task:
+            raise MonitorError("任务不存在或已放弃监控")
+        record = {
+            "taskId": task_id,
+            "taskRoot": str(task.get("taskRoot") or ""),
+            "name": str(task.get("name") or ""),
+            "dismissedAt": utc_now(),
+        }
+        with self._lock:
+            self._dismissed[task_id] = record
+            self._save_dismissed_tasks_locked()
+        return record
 
     def history(self, task_id: str, side: str, *, event_limit: int = 400) -> dict[str, Any]:
         task = self.task_by_id(task_id)
@@ -2680,6 +3005,8 @@ class MonitorService:
             return self.queue.set_roots([str(item) for item in roots])
         if action == "set-capacity":
             return self.queue.set_capacity(int(payload.get("capacity") or 0))
+        if action == "set-cooldown":
+            return self.queue.set_cooldown(int(payload.get("cooldownSeconds") or 0))
         if action == "set-paused":
             return self.queue.set_paused(bool(payload.get("paused")))
         if action == "queue-add":

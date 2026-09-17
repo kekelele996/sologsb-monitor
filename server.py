@@ -290,6 +290,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/action":
                 task_id = str(payload.get("taskId") or "")
+                if str(payload.get("action") or "") == "dismiss":
+                    task = self.service.dismiss_task(task_id)
+                    self._json({"ok": True, "task": task})
+                    return
                 side = str(payload.get("side") or "")
                 mode = str(payload.get("mode") or "resume")
                 job = self.service.start_action(task_id, side, mode)

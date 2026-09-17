@@ -2,11 +2,14 @@ import json
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
+from unittest import mock
 from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(APP))
 
+import monitor_core  # noqa: E402
 from monitor_core import (  # noqa: E402
     JobManager,
     MonitorService,
@@ -47,7 +50,7 @@ class MonitorCoreTests(unittest.TestCase):
                     "type": "system",
                     "subtype": "init",
                     "session_id": "11111111-1111-1111-1111-111111111111",
-                    "model": "public/model",
+                    "model": "auto_model/urm",
                     "claude_code_version": "2.1.197",
                 },
                 {
@@ -105,16 +108,35 @@ class MonitorCoreTests(unittest.TestCase):
         template = "执行 {{selected_project}} / {{project_code}} / {{task_type}} / {{difficulty}}"
         rendered = render_auto_trigger_prompt(
             template,
-            {"code": "PROJECT-CODE", "name": "测试项目"},
+            {"code": "cy-901", "name": "测试项目"},
             task_type="0-1代码生成",
             difficulty="困难",
         )
-        self.assertEqual(rendered, "执行 PROJECT-CODE · 测试项目 / PROJECT-CODE / 0-1代码生成 / 困难")
+        self.assertEqual(rendered, "执行 cy-901 · 测试项目 / cy-901 / 0-1代码生成 / 困难")
 
     def test_platform_queue_has_no_manual_ab_side_selector(self):
         html = (APP / "static" / "tasks.html").read_text(encoding="utf-8")
         self.assertNotIn('id="platformSide"', html)
         self.assertIn('item.source === "platform" ? "候选竞速"', html)
+        self.assertIn('id="inlineLogPanel"', html)
+        self.assertIn('id="inlineLogSelect"', html)
+        self.assertIn('data-log-id', html)
+        self.assertIn('id="platformAvailableCount"', html)
+        self.assertIn('id="cooldownInput"', html)
+        self.assertIn('api("set-cooldown",{cooldownSeconds:Number($("#cooldownInput").value)})', html)
+        self.assertIn("execution.activeTasks", html)
+
+    def test_platform_project_scope_toggle_and_source_badges(self):
+        html = (APP / "static" / "tasks.html").read_text(encoding="utf-8")
+        self.assertIn('id="mergeProjectPoolToggle"', html)
+        self.assertIn('localStorage.getItem("sologsb.mergeProjectPool")', html)
+        self.assertIn('(state.platformItems || []).filter(isMineProject)', html)
+        self.assertIn('isMineProject(item) ? "我的项目" : "项目池"', html)
+        self.assertIn('class="project-source ${projectSourceClass(item)}"', html)
+        self.assertIn('function queuedProjectCodes()', html)
+        self.assertIn('return items.filter((item) => !queuedCodes.has(String(item.code || "").trim().toLowerCase()));', html)
+        self.assertIn('renderPlatform();\n      render();', html)
+        self.assertIn('      renderPlatform();\n    }\n    document.addEventListener("click"', html)
 
     def test_platform_queue_item_snapshots_rendered_prompt(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -122,12 +144,12 @@ class MonitorCoreTests(unittest.TestCase):
             config = load_config(roots=[str(root)])
             manager = QueueManager(config, JobManager(config), state_path=root / "queue.json")
             item = manager.add_platform(
-                {"code": "PROJECT-CODE", "name": "平台项目"},
+                {"code": "cy-902", "name": "平台项目"},
                 task_type="0-1代码生成",
                 difficulty="困难",
-                trigger_prompt="执行平台项目 PROJECT-CODE",
+                trigger_prompt="执行平台项目 cy-902",
             )
-            self.assertEqual(item["triggerPrompt"], "执行平台项目 PROJECT-CODE")
+            self.assertEqual(item["triggerPrompt"], "执行平台项目 cy-902")
             self.assertIn("promptTemplate", manager.snapshot())
 
     def test_queue_add_remove(self):
@@ -146,10 +168,169 @@ class MonitorCoreTests(unittest.TestCase):
             manager.remove(item["id"])
             self.assertEqual(manager.snapshot()["counts"]["pending"], 0)
 
+    def test_queue_start_cooldown_is_enforced_and_persisted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            config = load_config(path=root / "config.json", roots=[str(root)])
+            config["automation"]["paused"] = False
+            config["automation"]["cooldownSeconds"] = 200
+            queue_path = root / "queue.json"
+            queue_path.write_text(
+                json.dumps(
+                    {
+                        "items": [
+                            {"id": "platform-1", "source": "platform", "projectCode": "cy-1", "status": "pending"},
+                            {"id": "platform-2", "source": "platform", "projectCode": "cy-2", "status": "pending"},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.object(monitor_core, "STATE_DIR", root):
+                manager = QueueManager(config, JobManager(config), state_path=queue_path)
+                manager._sync_running_locked = lambda: None
+                starts = []
+
+                def fake_start(item, *, reason="queue"):
+                    starts.append(item["id"])
+                    return {"pid": 1000 + len(starts), "startedAt": monitor_core.utc_now()}
+
+                manager.jobs.start_platform = fake_start
+                self.assertEqual(len(manager.tick()), 1)
+                self.assertEqual(len(manager.tick()), 0)
+                self.assertEqual(starts, ["platform-1"])
+                manager._lastStartedAt = (datetime.now(timezone.utc) - timedelta(seconds=201)).isoformat().replace("+00:00", "Z")
+                self.assertEqual(len(manager.tick()), 1)
+                self.assertEqual(starts, ["platform-1", "platform-2"])
+                snapshot = manager.snapshot()
+                self.assertEqual(snapshot["cooldownSeconds"], 200)
+                self.assertIn("cooldownRemainingSeconds", snapshot)
+
+    def test_successful_queue_item_is_removed_automatically(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            task_root = root / "real-task"
+            (task_root / "monitor").mkdir(parents=True)
+            (task_root / "monitor" / "state.json").write_text(
+                json.dumps({"taskName": "real-task", "status": "complete", "sides": {}}),
+                encoding="utf-8",
+            )
+            queue_path = root / "queue.json"
+            queue_path.write_text(
+                json.dumps(
+                    {
+                        "items": [
+                            {"id": "done-1", "source": "platform", "status": "done", "taskRoot": str(task_root)},
+                            {"id": "failed-1", "source": "platform", "status": "failed"},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manager = QueueManager(load_config(roots=[str(root)]), JobManager(load_config(roots=[str(root)])), state_path=queue_path)
+            snapshot = manager.snapshot()
+            self.assertEqual([item["id"] for item in snapshot["items"]], ["failed-1"])
+            self.assertTrue((task_root / "monitor" / "state.json").is_file())
+
+    def test_platform_item_is_removed_after_successful_trigger(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            task_root = root / "real-task"
+            (task_root / "monitor").mkdir(parents=True)
+            (task_root / "monitor" / "state.json").write_text(
+                json.dumps({"taskName": "real-task", "status": "prepared", "sides": {}}),
+                encoding="utf-8",
+            )
+            queue_path = root / "queue.json"
+            queue_path.write_text(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "id": "platform-triggered",
+                                "source": "platform",
+                                "status": "running",
+                                "jobPid": 12345,
+                                "taskRoot": str(task_root),
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result_file = root / "result.json"
+            result_file.write_text(
+                json.dumps(
+                    {
+                        "status": "running",
+                        "stage": "desktop-task-running",
+                        "taskRoot": str(task_root),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manager = QueueManager(load_config(roots=[str(root)]), JobManager(load_config(roots=[str(root)])), state_path=queue_path)
+            manager.jobs.get_platform = lambda item_id: {
+                "key": f"platform:{item_id}",
+                "status": "running",
+                "pid": 12345,
+                "resultFile": str(result_file),
+            }
+            snapshot = manager.snapshot()
+            self.assertEqual(snapshot["items"], [])
+            self.assertTrue((task_root / "monitor" / "state.json").is_file())
+
+    def test_failed_worker_does_not_hide_successful_platform_trigger(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            task_root = root / "real-task"
+            (task_root / "monitor").mkdir(parents=True)
+            (task_root / "monitor" / "state.json").write_text(
+                json.dumps({"taskName": "real-task", "status": "candidates_running", "sides": {}}),
+                encoding="utf-8",
+            )
+            queue_path = root / "queue.json"
+            queue_path.write_text(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "id": "platform-triggered",
+                                "source": "platform",
+                                "status": "failed",
+                                "taskRoot": str(task_root),
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result_file = root / "result.json"
+            result_file.write_text(
+                json.dumps(
+                    {
+                        "status": "running",
+                        "stage": "desktop-task-running",
+                        "taskRoot": str(task_root),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manager = QueueManager(load_config(roots=[str(root)]), JobManager(load_config(roots=[str(root)])), state_path=queue_path)
+            manager.jobs.get_platform = lambda item_id: {
+                "key": f"platform:{item_id}",
+                "status": "failed",
+                "pid": 12345,
+                "resultFile": str(result_file),
+            }
+            snapshot = manager.snapshot()
+            self.assertEqual(snapshot["items"], [])
+            self.assertTrue((task_root / "monitor" / "state.json").is_file())
+
     def test_submission_match(self):
-        task = {"repoName": "cy402-hearing-schedule", "projectCode": "PROJECT-CODE", "sides": {}}
+        task = {"repoName": "cy402-hearing-schedule", "projectCode": "cy-402", "sides": {}}
         self.assertTrue(_submission_matches_task({"repo": "owner/cy402-hearing-schedule"}, task))
-        self.assertTrue(_submission_matches_task({"prompt": "实现 PROJECT-CODE 系统"}, task))
+        self.assertTrue(_submission_matches_task({"prompt": "实现 cy-402 系统"}, task))
         self.assertFalse(_submission_matches_task({"repo": "owner/other"}, task))
 
     def test_snapshot_exposes_candidate_race_before_ab_mapping(self):
@@ -220,9 +401,191 @@ class MonitorCoreTests(unittest.TestCase):
         html = (APP / "static" / "index.html").read_text(encoding="utf-8")
         self.assertIn("mini-dot", html)
         self.assertIn("renderCandidateLogHtml", html)
+        self.assertIn("summary.activeTasks", html)
         self.assertIn(".mini-dot.running { border-color:var(--warn)", html)
         self.assertIn(".mini-dot.done { border-color:var(--ok)", html)
         self.assertIn(".mini-dot.failed, .mini-dot.stale { border-color:var(--bad)", html)
+        self.assertIn('candidates_ready: "候选竞速结束"', html)
+        self.assertIn('if (status === "cancelled") return "执行已停止";', html)
+        self.assertIn('status === "cancelled" ? "×" : ""', html)
+        self.assertIn('if (String(task.stateStatus || "") === "candidates_running") return true;', html)
+        self.assertIn('function taskDurationInfo(task)', html)
+        self.assertIn('const ENDED_TASK_STATUSES = new Set([', html)
+        self.assertIn('class="task-duration ${duration.active ? "live" : ""}"', html)
+        self.assertIn('data-command="dismiss-task"', html)
+        self.assertIn('body: JSON.stringify({ action: "dismiss", taskId })', html)
+
+    def test_summary_counts_tasks_not_parallel_candidate_instances(self):
+        summary = MonitorService._summary([
+            {
+                "sides": {},
+                "candidates": [
+                    {"candidateId": "candidate-1", "active": True},
+                    {"candidateId": "candidate-2", "active": True},
+                    {"candidateId": "candidate-3", "active": True},
+                ],
+            }
+        ])
+        self.assertEqual(summary["activeTasks"], 1)
+        self.assertEqual(summary["activeInstances"], 3)
+        self.assertEqual(summary["activeSides"], 3)
+
+    def test_summary_counts_active_codex_app_session_as_one_task(self):
+        summary = MonitorService._summary([
+            {
+                "sides": {},
+                "candidates": [],
+                "active": True,
+                "appSessions": [
+                    {
+                        "threadId": "01a0b071-cd01-7a63-93cb-f219ec74a7cf",
+                        "status": "inProgress",
+                    }
+                ],
+            }
+        ])
+        self.assertEqual(summary["activeTasks"], 1)
+        self.assertEqual(summary["activeAppSessions"], 1)
+
+    def test_dismiss_task_persists_and_hides_from_snapshot(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            task = root / "case-dismiss"
+            monitor = task / "monitor"
+            monitor.mkdir(parents=True)
+            (monitor / "state.json").write_text(
+                json.dumps({"taskName": "case-dismiss", "status": "blocked", "sides": {}}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            dismissed_path = root / "dismissed-tasks.json"
+            with mock.patch.object(monitor_core, "DISMISSED_TASKS_PATH", dismissed_path):
+                service = MonitorService(load_config(roots=[str(root)]))
+                snapshot = service.snapshot(fetch_submissions=False)
+                self.assertEqual(len(snapshot["tasks"]), 1)
+                task_id = snapshot["tasks"][0]["id"]
+                record = service.dismiss_task(task_id)
+                self.assertEqual(record["taskId"], task_id)
+                self.assertEqual(service.snapshot(fetch_submissions=False)["tasks"], [])
+                self.assertIsNone(service.task_by_id(task_id))
+                reloaded = MonitorService(load_config(roots=[str(root)]))
+                self.assertEqual(reloaded.snapshot(fetch_submissions=False)["tasks"], [])
+
+    def test_terminal_task_ignores_stale_app_session(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            task = root / "case-terminal"
+            monitor = task / "monitor"
+            monitor.mkdir(parents=True)
+            (monitor / "state.json").write_text(
+                json.dumps({"taskName": "case-terminal", "status": "complete", "sides": {}}),
+                encoding="utf-8",
+            )
+            service = MonitorService(load_config(roots=[str(root)]))
+            original = monitor_core.scan_codex_sessions
+            monitor_core.scan_codex_sessions = lambda *args, **kwargs: [
+                {
+                    "threadId": "01a0b06c-6977-78e3-8fc8-1e52d513ad19",
+                    "taskName": "case-terminal",
+                    "status": "inProgress",
+                    "active": True,
+                }
+            ]
+            try:
+                snapshot = service.snapshot(fetch_submissions=False)
+            finally:
+                monitor_core.scan_codex_sessions = original
+            task_data = snapshot["tasks"][0]
+            self.assertEqual(task_data["appSessions"], [])
+            self.assertFalse(task_data["active"])
+            self.assertEqual(snapshot["summary"]["activeTasks"], 0)
+
+    def test_job_manager_recovers_live_running_jobs_after_restart(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            state_dir = root / "jobs"
+            state_dir.mkdir()
+            log_path = state_dir / "20260918-120000-platform-platform-live.log"
+            job = {
+                "key": "platform:platform-live",
+                "source": "platform",
+                "platformItemId": "platform-live",
+                "status": "running",
+                "pid": 4242,
+                "startedAt": "2026-09-18T00:00:00Z",
+                "logPath": str(log_path),
+            }
+            log_path.with_suffix(".json").write_text(json.dumps(job), encoding="utf-8")
+            with mock.patch.object(monitor_core, "STATE_DIR", root), mock.patch.object(
+                monitor_core, "persisted_job_process_alive", return_value=True
+            ):
+                manager = JobManager(load_config(roots=[str(root)]))
+                running = manager.running()
+            self.assertEqual(len(running), 1)
+            self.assertEqual(running[0]["key"], "platform:platform-live")
+            self.assertEqual(running[0]["status"], "running")
+
+    def test_job_manager_reloads_running_platform_job_after_restart(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            state_dir = root / "jobs"
+            state_dir.mkdir()
+            log_path = state_dir / "20260918-120000-platform-platform-123.log"
+            job_path = log_path.with_suffix(".json")
+            job_path.write_text(
+                json.dumps(
+                    {
+                        "key": "platform:platform-123",
+                        "status": "running",
+                        "pid": 0,
+                        "logPath": str(log_path),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manager = JobManager(load_config(roots=[str(root)]))
+            original = monitor_core.STATE_DIR
+            monitor_core.STATE_DIR = root
+            try:
+                job = manager.get_platform("platform-123")
+            finally:
+                monitor_core.STATE_DIR = original
+            self.assertIsNotNone(job)
+            self.assertEqual(job["status"], "failed")
+            self.assertIn("进程已退出", job["error"])
+
+    def test_pending_platform_item_recovers_when_persisted_worker_is_alive(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            queue_path = root / "queue.json"
+            queue_path.write_text(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "id": "platform-999",
+                                "source": "platform",
+                                "projectCode": "cy-999",
+                                "status": "pending",
+                                "jobPid": "",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            service = MonitorService(load_config(roots=[str(root)]))
+            manager = QueueManager(service.config, service.jobs, state_path=queue_path)
+            manager.jobs.get_platform = lambda item_id: {
+                "key": f"platform:{item_id}",
+                "status": "running",
+                "pid": 12345,
+                "startedAt": "2026-09-18T00:00:00Z",
+                "resultFile": "",
+            }
+            manager._sync_running_locked()
+            item = manager.snapshot()["items"][0]
+            self.assertEqual(item["status"], "running")
+            self.assertEqual(item["jobPid"], 12345)
 
     def test_snapshot_with_fake_docker(self):
         with tempfile.TemporaryDirectory() as temp:
