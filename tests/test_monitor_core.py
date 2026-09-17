@@ -156,15 +156,23 @@ class MonitorCoreTests(unittest.TestCase):
             self.assertEqual(item["triggerPrompt"], "执行平台项目 cy-902")
             self.assertIn("promptTemplate", manager.snapshot())
 
-    def test_prompt_template_can_be_updated_and_persisted(self):
+    def test_prompt_template_update_syncs_queued_prompts(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             config_path = root / "config.json"
             config = load_config(path=config_path, roots=[str(root)])
             manager = QueueManager(config, JobManager(config), state_path=root / "queue.json")
-            template = "自定义模板 {{project_code}} / {{task_type}}"
+            item = manager.add_platform(
+                {"code": "cy-903", "name": "平台项目"},
+                task_type="feature迭代",
+                difficulty="地狱",
+                trigger_prompt="旧模板 cy-903",
+            )
+            template = "自定义模板 {{project_code}} / {{task_type}} / {{difficulty}}"
             snapshot = manager.set_prompt_template(template)
             self.assertEqual(snapshot["promptTemplate"], template)
+            queued = next(value for value in snapshot["items"] if value["id"] == item["id"])
+            self.assertEqual(queued["triggerPrompt"], "自定义模板 cy-903 / feature迭代 / 地狱")
             reloaded = load_config(path=config_path, roots=[str(root)])
             self.assertEqual(reloaded["automation"]["promptTemplate"], template)
 

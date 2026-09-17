@@ -2313,9 +2313,29 @@ class QueueManager:
             raise MonitorError("Prompt 模板不能为空")
         if len(value) > 200000:
             raise MonitorError("Prompt 模板过长")
-        self._automation_cfg()["promptTemplate"] = value
-        config_path = Path(str(self.config.get("_configPath") or CONFIG_PATH))
-        save_config(self.config, config_path)
+        with self._lock:
+            self._automation_cfg()["promptTemplate"] = value
+            changed = False
+            for item in self._items:
+                if item.get("source") != "platform" or item.get("status") == "running":
+                    continue
+                project = {
+                    "code": str(item.get("projectCode") or ""),
+                    "name": str(item.get("projectName") or item.get("taskName") or item.get("projectCode") or ""),
+                }
+                trigger_prompt = render_auto_trigger_prompt(
+                    value,
+                    project,
+                    task_type=str(item.get("taskType") or "0-1代码生成"),
+                    difficulty=str(item.get("difficulty") or "困难"),
+                )
+                if item.get("triggerPrompt") != trigger_prompt:
+                    item["triggerPrompt"] = trigger_prompt
+                    changed = True
+            if changed:
+                self._save()
+            config_path = Path(str(self.config.get("_configPath") or CONFIG_PATH))
+            save_config(self.config, config_path)
         return self.snapshot()
 
     def set_roots(self, roots: list[str]) -> dict[str, Any]:
